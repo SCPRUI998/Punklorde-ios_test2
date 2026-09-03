@@ -35,247 +35,186 @@ jobs:
       - name: 6. 准备 Flutter 依赖与清理缓存
         run: |
           flutter config --no-enable-swift-package-manager
+
           rm -rf ios/Flutter/ephemeral
           rm -rf ios/Runner.xcworkspace/xcshareddata/swiftpm
           rm -rf ~/Library/Developer/Xcode/DerivedData
           rm -rf build/ios
+
           flutter precache --ios
           flutter pub get
+
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 修正 Podspec、生成 Podfile、清洗 Umbrella 并注释掉有问题的注册
+      - name: 7. 修复 zstandard_ios 并安装 CocoaPods
         run: |
-          # A. 修补 zstandard_ios 和 flutter_foreground_task 的 podspec
-          python3 -c "
-          import glob, re
+          set -e
 
-          # 处理 zstandard_ios
-          for ps in glob.glob('ios/.symlinks/plugins/zstandard_ios/**/*.podspec', recursive=True):
+          echo "===== 修复 zstandard_ios podspec ====="
+
+          python3 - <<'PY'
+          import glob
+          import re
+
+          for ps in glob.glob(
+              'ios/.symlinks/plugins/zstandard_ios/**/*.podspec',
+              recursive=True
+          ):
+              print(f"Processing: {ps}")
+
               with open(ps, 'r', encoding='utf-8') as f:
                   content = f.read()
-              content = re.sub(r's\.public_header_files\s*=\s*\[[^\]]*\]\s*', '', content, flags=re.DOTALL)
-              content = re.sub(r's\.public_header_files\s*=\s*[^\n]*\n', '', content)
-              content += \"\ns.public_header_files = 'Classes/**/*Plugin*.h'\n\"
+
+              # 删除原有 public_header_files
+              content = re.sub(
+                  r's\.public_header_files\s*=\s*\[[^\]]*\]\s*',
+                  '',
+                  content,
+                  flags=re.DOTALL
+              )
+
+              content = re.sub(
+                  r's\.public_header_files\s*=\s*[^\n]*\n',
+                  '',
+                  content
+              )
+
+              # 添加正确的插件头文件范围
+              if "s.public_header_files = 'Classes/**/*Plugin*.h'" not in content:
+                  content += "\ns.public_header_files = 'Classes/**/*Plugin*.h'\n"
+
               with open(ps, 'w', encoding='utf-8') as f:
                   f.write(content)
 
-          # 处理 flutter_foreground_task：只设 module_name，不设 public_header_files
-          for ps in glob.glob('ios/.symlinks/plugins/flutter_foreground_task/ios/*.podspec', recursive=True):
-              with open(ps, 'r', encoding='utf-8') as f:
-                  content = f.read()
-              if 's.module_name' not in content:
-                  content += \"\ns.module_name = 'FlutterForegroundTaskPlugin'\n\"
-              content = re.sub(r's\.public_header_files\s*=\s*\[[^\]]*\]\s*', '', content, flags=re.DOTALL)
-              content = re.sub(r's\.public_header_files\s*=\s*[^\n]*\n', '', content)
-              with open(ps, 'w', encoding='utf-8') as f:
-                  f.write(content)
-          "
+          print("zstandard_ios podspec patch completed.")
+          PY
 
-          # B. 写入 Podfile（含 post_install）
-          cat << 'EOF' > ios/Podfile
-          platform :ios, '15.0'
+          echo "===== 检查 flutter_foreground_task 配置 ====="
 
-          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+          if [ -d "ios/.symlinks/plugins/flutter_foreground_task" ]; then
+            echo "flutter_foreground_task plugin found."
 
-          project 'Runner', {
-            'Debug' => :debug,
-            'Profile' => :release,
-            'Release' => :release,
-          }
+            find ios/.symlinks/plugins/flutter_foreground_task -maxdepth 3 \
+              -type f \
+              \( -name "*.podspec" -o -name "*.swift" -o -name "*.h" \) \
+              -print
+          else
+            echo "flutter_foreground_task plugin directory not found."
+          fi
 
-          def flutter_root
-            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
-            unless File.exist?(generated_xcode_build_settings_path)
-              raise "#{generated_xcode_build_settings_path} must exist."
-            end
+          echo "===== 清理 CocoaPods ====="
 
-            File.foreach(generated_xcode_build_settings_path) do |line|
-              matches = line.match(/FLUTTER_ROOT\=(.*)/)
-              return matches[1].strip if matches
-            end
-            raise "FLUTTER_ROOT not found"
-          end
-
-          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
-
-          flutter_ios_podfile_setup
-
-          target 'Runner' do
-            pod 'SDWebImage', :modular_headers => true
-            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-          end
-
-          post_install do |installer|
-            installer.pods_project.targets.each do |target|
-              flutter_additional_ios_build_settings(target)
-              target.build_configurations.each do |config|
-                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-                config.build_settings['ENABLE_BITCODE'] = 'NO'
-                config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
-
-                if target.name.include?('zstandard_ios')
-                  config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
-                  config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
-                  config.build_settings['DEFINES_MODULE'] = 'NO'
-                end
-
-                if target.name == 'flutter_foreground_task'
-                  config.build_settings['DEFINES_MODULE'] = 'YES'
-                  config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
-                  config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/Classes" '
-                end
-              end
-
-              if target.name.include?('rust_lib_punklorde')
-                target.build_phases.each do |phase|
-                  if phase.respond_to?(:output_paths)
-                    phase.output_paths.clear
-                  end
-                end
-              end
-            end
-
-            # 清洗 zstandard_ios umbrella
-            umbrella_dir = "#{installer.sandbox.root}/Target Support Files/zstandard_ios"
-            Dir.glob("#{umbrella_dir}/*umbrella.h").each do |umb|
-              if File.exist?(umb)
-                plugin_headers = Dir.glob("#{installer.sandbox.root}/zstandard_ios/Classes/*Plugin*.h")
-                new_content = if plugin_headers.any?
-                                plugin_headers.map { |h| "#import <zstandard_ios/#{File.basename(h)}>" }.join("\n")
-                              else
-                                "// Umbrella cleared\n"
-                              end
-                File.write(umb, new_content)
-                puts "✅ post_install: Overwritten umbrella: #{umb}"
-              end
-            end
-          end
-          EOF
-
-          # C. 修改项目文件
-          python3 -c "
-          import re, os
-
-          # Bridging Header
-          header_path = 'ios/Runner/Runner-Bridging-Header.h'
-          if os.path.exists(header_path):
-              with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
-                  h_content = f.read()
-              h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '', h_content)
-              with open(header_path, 'w', encoding='utf-8') as f:
-                  f.write(h_content)
-
-          # pbxproj
-          pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
-          with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
-              pbx = f.read()
-          pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
-          if 'DEVELOPMENT_TEAM =' in pbx:
-              pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
-          else:
-              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tDEVELOPMENT_TEAM = 1234567890;', pbx)
-          if 'CODE_SIGNING_ALLOWED =' in pbx:
-              pbx = re.sub(r'CODE_SIGNING_ALLOWED = [^;]+;', 'CODE_SIGNING_ALLOWED = NO;', pbx)
-          else:
-              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;', pbx)
-          with open(pbx_path, 'w', encoding='utf-8') as f:
-              f.write(pbx)
-
-          # xcconfig
-          override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
-          for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
-              if os.path.exists(cfg):
-                  with open(cfg, 'a', encoding='utf-8') as f:
-                      f.write(override_flags)
-
-          # 核心：逐行注释掉 GeneratedPluginRegistrant.m 中的 FlutterForegroundTaskPlugin 调用
-          registrant_path = 'ios/Runner/GeneratedPluginRegistrant.m'
-          if os.path.exists(registrant_path):
-              with open(registrant_path, 'r', encoding='utf-8') as f:
-                  lines = f.readlines()
-              new_lines = []
-              for line in lines:
-                  if 'FlutterForegroundTaskPlugin' in line and 'registerWithRegistrar' in line:
-                      if not line.lstrip().startswith('//'):
-                          new_lines.append('// ' + line.lstrip())
-                      else:
-                          new_lines.append(line)
-                  else:
-                      new_lines.append(line)
-              with open(registrant_path, 'w', encoding='utf-8') as f:
-                  f.writelines(new_lines)
-              print('✅ Commented out FlutterForegroundTaskPlugin registration.')
-          "
-
-          # D. 执行 Pod install
           cd ios
-          rm -rf Pods Podfile.lock
+
+          rm -rf Pods
+          rm -f Podfile.lock
+
+          pod deintegrate || true
           pod install --repo-update
+
           cd ..
 
-          # E. 手动重写 umbrella（第二道防线）
-          python3 -c "
-          import glob, os
-          for umb in glob.glob('ios/Pods/Target Support Files/zstandard_ios/*umbrella.h'):
-              if os.path.exists(umb):
-                  plugin_headers = glob.glob('ios/Pods/zstandard_ios/Classes/*Plugin*.h')
-                  new_content = '\n'.join([f'#import <zstandard_ios/{os.path.basename(h)}>' for h in plugin_headers]) if plugin_headers else '// umbrella cleared'
-                  with open(umb, 'w', encoding='utf-8') as f:
-                      f.write(new_content)
-                  print(f'✅ Manual overwrite: {umb}')
-          "
-
-      - name: 7.5 验证注释是否生效
+      - name: 7.5 检查 FlutterForegroundTask 插件注册
         run: |
-          echo "====== 检查 GeneratedPluginRegistrant.m 中的 FlutterForegroundTaskPlugin 行 ======"
-          grep -n "FlutterForegroundTaskPlugin" ios/Runner/GeneratedPluginRegistrant.m || echo "✅ 没有找到未注释的调用，已成功屏蔽"
-          echo "=========================================================="
+          echo "===== GeneratedPluginRegistrant.m ====="
+
+          if [ -f "ios/Runner/GeneratedPluginRegistrant.m" ]; then
+            grep -n -E "FlutterForegroundTaskPlugin|SwiftFlutterForegroundTaskPlugin" \
+              ios/Runner/GeneratedPluginRegistrant.m || true
+          fi
+
+          echo "===== flutter_foreground_task Pod ====="
+
+          if [ -d "ios/Pods/flutter_foreground_task" ]; then
+            find ios/Pods/flutter_foreground_task \
+              -maxdepth 3 \
+              -type f \
+              | sort
+          fi
+
+          echo "===== Flutter plugin package ====="
+
+          flutter pub deps | grep -A 3 -B 2 "flutter_foreground_task" || true
+
+      - name: 7.6 清洗 zstandard_ios umbrella
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          import glob
+          import os
+
+          umbrella_files = glob.glob(
+              'ios/Pods/Target Support Files/zstandard_ios/*umbrella.h'
+          )
+
+          for umb in umbrella_files:
+              if not os.path.exists(umb):
+                  continue
+
+              plugin_headers = glob.glob(
+                  'ios/Pods/zstandard_ios/Classes/*Plugin*.h'
+              )
+
+              if plugin_headers:
+                  new_content = '\n'.join(
+                      f'#import <zstandard_ios/{os.path.basename(h)}>'
+                      for h in plugin_headers
+                  )
+              else:
+                  new_content = '// umbrella cleared'
+
+              with open(umb, 'w', encoding='utf-8') as f:
+                  f.write(new_content)
+
+              print(f"Updated umbrella: {umb}")
+          PY
 
       - name: 8. 编译 iOS App（未签名）
         run: |
-          # 构建前再次强制注释（第三道防线），并确保导入 os
-          python3 -c "
-          import os
-          registrant_path = 'ios/Runner/GeneratedPluginRegistrant.m'
-          if os.path.exists(registrant_path):
-              with open(registrant_path, 'r', encoding='utf-8') as f:
-                  lines = f.readlines()
-              new_lines = []
-              for line in lines:
-                  if 'FlutterForegroundTaskPlugin' in line and 'registerWithRegistrar' in line:
-                      if not line.lstrip().startswith('//'):
-                          new_lines.append('// ' + line.lstrip())
-                      else:
-                          new_lines.append(line)
-                  else:
-                      new_lines.append(line)
-              with open(registrant_path, 'w', encoding='utf-8') as f:
-                  f.writelines(new_lines)
-              print('✅ Pre-build: commented out again.')
-          "
-          # 再次确保 umbrella 干净
-          python3 -c "
-          import glob, os
-          for umb in glob.glob('ios/Pods/Target Support Files/zstandard_ios/*umbrella.h'):
-              if os.path.exists(umb):
-                  plugin_headers = glob.glob('ios/Pods/zstandard_ios/Classes/*Plugin*.h')
-                  new_content = '\n'.join([f'#import <zstandard_ios/{os.path.basename(h)}>' for h in plugin_headers]) if plugin_headers else '// umbrella cleared'
-                  with open(umb, 'w', encoding='utf-8') as f:
-                      f.write(new_content)
-                  print(f'✅ Pre-build overwrite umbrella: {umb}')
-          "
-          flutter build ios --release --no-codesign
+          set -e
 
-      - name: 9. 打包为 IPA
+          echo "===== Flutter Doctor ====="
+          flutter doctor -v
+
+          echo "===== Flutter Version ====="
+          flutter --version
+
+          echo "===== CocoaPods Version ====="
+          pod --version
+
+          echo "===== Build iOS ====="
+
+          flutter build ios \
+            --release \
+            --no-codesign \
+            -v
+
+      - name: 9. 检查编译产物
         run: |
+          set -e
+
+          echo "===== build/ios/iphoneos ====="
+          ls -lah build/ios/iphoneos
+
+          test -d build/ios/iphoneos/Runner.app
+
+      - name: 10. 打包为 IPA
+        run: |
+          set -e
+
           cd build/ios/iphoneos
+
+          rm -rf Payload
           mkdir Payload
+
           mv Runner.app Payload/
+
           zip -r Runner.ipa Payload
 
-      - name: 10. 上传 IPA
+          ls -lh Runner.ipa
+
+      - name: 11. 上传 IPA
         uses: actions/upload-artifact@v4
         with:
           name: Punklorde-iOS-Unsigned
