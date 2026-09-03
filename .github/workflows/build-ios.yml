@@ -47,14 +47,15 @@ jobs:
 
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 6.5 修正 GeneratedPluginRegistrant.m 中的类名
+      - name: 6.5 注释 GeneratedPluginRegistrant.m 中的问题调用
         run: |
           if [ -f "ios/Runner/GeneratedPluginRegistrant.m" ]; then
-            sed -i '' 's/FlutterForegroundTaskPlugin/SwiftFlutterForegroundTaskPlugin/g' ios/Runner/GeneratedPluginRegistrant.m
-            echo "✅ Replaced class name in GeneratedPluginRegistrant.m"
+            # 注释所有包含 FlutterForegroundTaskPlugin 和 registerWithRegistrar 的行
+            sed -i '' '/FlutterForegroundTaskPlugin.*registerWithRegistrar/s/^/\/\//' ios/Runner/GeneratedPluginRegistrant.m
+            echo "✅ Commented out FlutterForegroundTaskPlugin registration."
           fi
 
-      - name: 7. 修复 zstandard_ios podspec、生成自定义 Podfile 并安装 CocoaPods
+      - name: 7. 修复 zstandard_ios、统一部署目标、生成 Podfile 并安装 CocoaPods
         run: |
           set -e
 
@@ -92,7 +93,7 @@ jobs:
           print("zstandard_ios podspec patch completed.")
           PY
 
-          echo "===== 生成自定义 Podfile（包含所有修复） ====="
+          echo "===== 生成自定义 Podfile（含 post_install 清洗 umbrella） ====="
           cat << 'EOF' > ios/Podfile
           use_modular_headers!
           platform :ios, '15.0'
@@ -137,7 +138,6 @@ jobs:
                 config.build_settings['ENABLE_BITCODE'] = 'NO'
                 config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
 
-                # 修复 zstandard_ios
                 if target.name.include?('zstandard_ios')
                   config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
                   config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
@@ -155,7 +155,7 @@ jobs:
               end
             end
 
-            # 清洗 zstandard_ios umbrella（在 pod install 时进行）
+            # 清洗 zstandard_ios umbrella
             umbrella_dir = "#{installer.sandbox.root}/Target Support Files/zstandard_ios"
             Dir.glob("#{umbrella_dir}/*umbrella.h").each do |umb|
               if File.exist?(umb)
@@ -172,6 +172,58 @@ jobs:
           end
           EOF
 
+          echo "===== 统一部署目标为 iOS 15.0 ====="
+          python3 -c "
+          import re, os, plistlib
+          from xml.etree import ElementTree
+
+          # 修改 Info.plist
+          info_path = 'ios/Runner/Info.plist'
+          if os.path.exists(info_path):
+              try:
+                  with open(info_path, 'rb') as f:
+                      plist = plistlib.load(f)
+                  plist['MinimumOSVersion'] = '15.0'
+                  with open(info_path, 'wb') as f:
+                      plistlib.dump(plist, f)
+                  print('Updated Info.plist MinimumOSVersion to 15.0')
+              except:
+                  # 如果 plistlib 解析失败，用正则简单替换
+                  with open(info_path, 'r', encoding='utf-8') as f:
+                      content = f.read()
+                  content = re.sub(r'<key>MinimumOSVersion</key>\s*<string>[0-9.]+</string>', '<key>MinimumOSVersion</key><string>15.0</string>', content)
+                  with open(info_path, 'w', encoding='utf-8') as f:
+                      f.write(content)
+                  print('Updated Info.plist MinimumOSVersion via regex.')
+
+          # 修改 pbxproj，确保所有 target 的部署目标为 15.0
+          pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
+          with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
+              pbx = f.read()
+          # 替换所有 IPHONEOS_DEPLOYMENT_TARGET 出现（包括注释部分）
+          pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET\s*=\s*[0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
+          # 确保 DEVELOPMENT_TEAM 和 CODE_SIGNING 设置
+          if 'DEVELOPMENT_TEAM =' in pbx:
+              pbx = re.sub(r'DEVELOPMENT_TEAM\s*=\s*[^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
+          else:
+              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tDEVELOPMENT_TEAM = 1234567890;', pbx)
+          if 'CODE_SIGNING_ALLOWED =' in pbx:
+              pbx = re.sub(r'CODE_SIGNING_ALLOWED\s*=\s*[^;]+;', 'CODE_SIGNING_ALLOWED = NO;', pbx)
+          else:
+              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;', pbx)
+          with open(pbx_path, 'w', encoding='utf-8') as f:
+              f.write(pbx)
+          print('Updated pbxproj.')
+
+          # 修改所有 xcconfig 文件
+          override_flags = '\nIPHONEOS_DEPLOYMENT_TARGET = 15.0\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
+          for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
+              if os.path.exists(cfg):
+                  with open(cfg, 'a', encoding='utf-8') as f:
+                      f.write(override_flags)
+                  print(f'Updated {cfg}')
+          "
+
           echo "===== 清理并安装 CocoaPods ====="
           cd ios
           rm -rf Pods Podfile.lock
@@ -179,7 +231,7 @@ jobs:
           pod install --repo-update
           cd ..
 
-      - name: 7.5 再次清洗 zstandard_ios umbrella（二次保障）
+      - name: 7.5 再次清洗 umbrella（第二道防线）
         run: |
           set -e
 
@@ -226,10 +278,24 @@ jobs:
           echo "===== CocoaPods Version ====="
           pod --version
 
-          echo "===== 再次确保类名替换（第三道防线） ====="
+          echo "===== 再次强制注释问题行（第三道防线） ====="
           if [ -f "ios/Runner/GeneratedPluginRegistrant.m" ]; then
+            sed -i '' '/FlutterForegroundTaskPlugin.*registerWithRegistrar/s/^/\/\//' ios/Runner/GeneratedPluginRegistrant.m
             sed -i '' 's/FlutterForegroundTaskPlugin/SwiftFlutterForegroundTaskPlugin/g' ios/Runner/GeneratedPluginRegistrant.m
+            echo "✅ Pre-build: commented out and replaced class name."
           fi
+
+          echo "===== 再次清洗 umbrella（第三道防线） ====="
+          python3 - <<'PY'
+          import glob, os
+          for umb in glob.glob('ios/Pods/Target Support Files/zstandard_ios/*umbrella.h'):
+              if os.path.exists(umb):
+                  plugin_headers = glob.glob('ios/Pods/zstandard_ios/Classes/*Plugin*.h')
+                  new_content = '\n'.join([f'#import <zstandard_ios/{os.path.basename(h)}>' for h in plugin_headers]) if plugin_headers else '// umbrella cleared'
+                  with open(umb, 'w', encoding='utf-8') as f:
+                      f.write(new_content)
+                  print(f'✅ Pre-build overwrite umbrella: {umb}')
+          PY
 
           echo "===== Build iOS ====="
           flutter build ios \
