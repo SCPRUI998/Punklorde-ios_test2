@@ -27,14 +27,16 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 5. 准备 Flutter 依赖与代码生成
+      - name: 5. 准备 Flutter 依赖与清理缓存
         run: |
           flutter config --no-enable-swift-package-manager
+          rm -rf ios/Flutter/ephemeral
+          rm -rf ios/Runner.xcworkspace/xcshareddata/swiftpm
           flutter precache --ios
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 6. 重写标准 Podfile 并手动安装 CocoaPods 依赖 (iOS 15.0)
+      - name: 6. 重写 Podfile（修复 Rust 静态库重复生成冲突）
         run: |
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
@@ -75,28 +77,40 @@ jobs:
               target.build_configurations.each do |config|
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
               end
+
+              # 核心修复：清空 rust_lib_punklorde 脚本的重复输出路径声明，解决 Multiple commands produce 报错
+              if target.name.include?('rust_lib_punklorde')
+                target.build_phases.each do |phase|
+                  if phase.respond_to?(:output_paths)
+                    phase.output_paths.clear
+                  end
+                end
+              end
             end
           end
           EOF
 
-          # 强制修改 Xcode 工程最低版本至 15.0
+          # 强制修改 Xcode 工程最低版本至 15.0，并剥离 Runner 工程内部对 rust 静态库的直接硬链接
           python3 -c "
           import re
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
+
           pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
+
           with open(pbx_path, 'w', encoding='utf-8') as f:
               f.write(pbx)
           "
 
-          # 显式执行 Pod 安装
+          # 重新安装 CocoaPods 依赖
           cd ios
+          rm -rf Pods Podfile.lock
           pod install --repo-update
           cd ..
 
-      - name: 7. 编译 iOS App（未签名，禁用 Flutter 自动覆盖 Pods）
-        run: flutter build ios --release --no-codesign 
+      - name: 7. 编译 iOS App（未签名）
+        run: flutter build ios --release --no-codesign
 
       - name: 8. 将打包产物封装为 .ipa 格式
         run: |
