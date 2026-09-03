@@ -37,163 +37,140 @@ jobs:
           flutter config --no-enable-swift-package-manager
           rm -rf ios/Flutter/ephemeral
           rm -rf ios/Runner.xcworkspace/xcshareddata/swiftpm
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          rm -rf build/ios
           flutter precache --ios
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 修正插件 Podspec、生成 Podfile 并手术式修复 Umbrella 头文件
-  run: |
-    # A. 修补 zstandard_ios 本地的 podspec，强制仅暴露 Plugin 类头文件（兼容多行格式）
-    python3 -c "
-    import glob, re
-    for ps in glob.glob('ios/.symlinks/plugins/zstandard_ios/**/*.podspec', recursive=True):
-        with open(ps, 'r', encoding='utf-8') as f:
-            content = f.read()
-        # 删除所有已有的 s.public_header_files 定义（支持单行或多行数组）
-        content = re.sub(r's\.public_header_files\s*=\s*\[[^\]]*\]\s*', '', content, flags=re.DOTALL)
-        content = re.sub(r's\.public_header_files\s*=\s*[^\n]*\n', '', content)
-        # 在 podspec 末尾添加新的 public_header_files（仅匹配 Plugin 类头文件）
-        content += \"\ns.public_header_files = 'Classes/**/*Plugin*.h'\n\"
-        with open(ps, 'w', encoding='utf-8') as f:
-            f.write(content)
-    "
+      - name: 7. 修正插件 Podspec、生成 Podfile 并注入 Umbrella 头文件清洗逻辑
+        run: |
+          # A. 修补 zstandard_ios 本地的 podspec，仅暴露 Plugin 类头文件
+          python3 -c "
+          import glob, re
+          for ps in glob.glob('ios/.symlinks/plugins/zstandard_ios/**/*.podspec', recursive=True):
+              with open(ps, 'r', encoding='utf-8') as f:
+                  content = f.read()
+              content = re.sub(r's\.public_header_files\s*=\s*\[[^\]]*\]\s*', '', content, flags=re.DOTALL)
+              content = re.sub(r's\.public_header_files\s*=\s*[^\n]*\n', '', content)
+              content += \"\ns.public_header_files = 'Classes/**/*Plugin*.h'\n\"
+              with open(ps, 'w', encoding='utf-8') as f:
+                  f.write(content)
+          "
 
-    # B. 动态写入 Podfile（包含针对 zstandard_ios 的专项修复）
-    cat << 'EOF' > ios/Podfile
-    platform :ios, '15.0'
+          # B. 动态写入 Podfile
+          cat << 'EOF' > ios/Podfile
+          platform :ios, '15.0'
 
-    ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
-    project 'Runner', {
-      'Debug' => :debug,
-      'Profile' => :release,
-      'Release' => :release,
-    }
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
 
-    def flutter_root
-      generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
-      unless File.exist?(generated_xcode_build_settings_path)
-        raise "#{generated_xcode_build_settings_path} must exist."
-      end
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist."
+            end
 
-      File.foreach(generated_xcode_build_settings_path) do |line|
-        matches = line.match(/FLUTTER_ROOT\=(.*)/)
-        return matches[1].strip if matches
-      end
-      raise "FLUTTER_ROOT not found"
-    end
-
-    require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
-
-    flutter_ios_podfile_setup
-
-    target 'Runner' do
-      # 解决 DKPhotoGallery (Swift) 对 SDWebImage (ObjC) 的模块化依赖要求
-      pod 'SDWebImage', :modular_headers => true
-
-      flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-    end
-
-    post_install do |installer|
-      installer.pods_project.targets.each do |target|
-        flutter_additional_ios_build_settings(target)
-        target.build_configurations.each do |config|
-          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
-          config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-          config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-          config.build_settings['ENABLE_BITCODE'] = 'NO'
-          config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
-
-          # 为 zstandard_ios 内部编译补充 C 头文件搜索路径，并禁用模块化以避免 umbrella 问题
-          if target.name.include?('zstandard_ios')
-            config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
-            config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
-            config.build_settings['DEFINES_MODULE'] = 'NO'
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found"
           end
-        end
 
-        # 清空 rust_lib_punklorde 脚本的重复输出路径声明
-        if target.name.include?('rust_lib_punklorde')
-          target.build_phases.each do |phase|
-            if phase.respond_to?(:output_paths)
-              phase.output_paths.clear
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+          flutter_ios_podfile_setup
+
+          target 'Runner' do
+            pod 'SDWebImage', :modular_headers => true
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+          end
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                config.build_settings['ENABLE_BITCODE'] = 'NO'
+                config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+
+                if target.name.include?('zstandard_ios')
+                  config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
+                  config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
+                  config.build_settings['DEFINES_MODULE'] = 'NO'
+                end
+              end
+
+              if target.name.include?('rust_lib_punklorde')
+                target.build_phases.each do |phase|
+                  if phase.respond_to?(:output_paths)
+                    phase.output_paths.clear
+                  end
+                end
+              end
+            end
+
+            # 内嵌 Hook：每次 pod install 生成 Umbrella 头文件后自动剥离 zstd.h 引用
+            Dir.glob("#{installer.sandbox.root}/Target Support Files/zstandard_ios/*umbrella.h").each do |umb|
+              if File.exist?(umb)
+                lines = File.readlines(umb).reject { |l| l.include?('zstd.h') }
+                File.open(umb, 'w') { |f| f.puts(lines) }
+              end
             end
           end
-        end
-      end
-    end
-    EOF
+          EOF
 
-    # C. 修改 project.pbxproj & Bridging Header & xcconfig（保持原有修复）
-    python3 -c "
-    import re, os
+          # C. 修改 project.pbxproj & Bridging Header & xcconfig
+          python3 -c "
+          import re, os
 
-    header_path = 'ios/Runner/Runner-Bridging-Header.h'
-    if os.path.exists(header_path):
-        with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
-            h_content = f.read()
-        h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '#import <flutter_foreground_task/FlutterForegroundTaskPlugin.h>', h_content)
-        with open(header_path, 'w', encoding='utf-8') as f:
-            f.write(h_content)
+          header_path = 'ios/Runner/Runner-Bridging-Header.h'
+          if os.path.exists(header_path):
+              with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
+                  h_content = f.read()
+              h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '#import <flutter_foreground_task/FlutterForegroundTaskPlugin.h>', h_content)
+              with open(header_path, 'w', encoding='utf-8') as f:
+                  f.write(h_content)
 
-    pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
-    with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
-        pbx = f.read()
+          pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
+          with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
+              pbx = f.read()
 
-    pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
+          pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
 
-    if 'DEVELOPMENT_TEAM =' in pbx:
-        pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
-    else:
-        pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tDEVELOPMENT_TEAM = 1234567890;', pbx)
+          if 'DEVELOPMENT_TEAM =' in pbx:
+              pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
+          else:
+              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tDEVELOPMENT_TEAM = 1234567890;', pbx)
 
-    if 'CODE_SIGNING_ALLOWED =' in pbx:
-        pbx = re.sub(r'CODE_SIGNING_ALLOWED = [^;]+;', 'CODE_SIGNING_ALLOWED = NO;', pbx)
-    else:
-        pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;', pbx)
+          if 'CODE_SIGNING_ALLOWED =' in pbx:
+              pbx = re.sub(r'CODE_SIGNING_ALLOWED = [^;]+;', 'CODE_SIGNING_ALLOWED = NO;', pbx)
+          else:
+              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;', pbx)
 
-    with open(pbx_path, 'w', encoding='utf-8') as f:
-        f.write(pbx)
+          with open(pbx_path, 'w', encoding='utf-8') as f:
+              f.write(pbx)
 
-    override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
-    for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
-        if os.path.exists(cfg):
-            with open(cfg, 'a', encoding='utf-8') as f:
-                f.write(override_flags)
-    "
+          override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
+          for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
+              if os.path.exists(cfg):
+                  with open(cfg, 'a', encoding='utf-8') as f:
+                      f.write(override_flags)
+          "
 
-    # D. 执行 Pod 安装（清理旧缓存）
-    cd ios
-    rm -rf Pods Podfile.lock
-    pod install --repo-update
-    cd ..
-
-    # E. 手术式清洗：强制替换 zstandard_ios-umbrella.h 内容，仅引用插件自身的头文件，彻底排除 zstd.h
-    python3 -c "
-    import glob, os
-    umb_files = glob.glob('ios/Pods/Target Support Files/zstandard_ios/*umbrella.h')
-    if umb_files:
-        umb = umb_files[0]
-        # 查找插件实际的头文件（匹配 *Plugin*.h）
-        plugin_headers = glob.glob('ios/Pods/zstandard_ios/Classes/*Plugin*.h')
-        if plugin_headers:
-            # 构建新的 umbrella 内容，仅包含这些头文件的导入
-            new_content = '\n'.join([f'#import <zstandard_ios/{os.path.basename(h)}>' for h in plugin_headers])
-        else:
-            # 若找不到，则清空 umbrella，避免任何有害引用
-            new_content = '// umbrella header cleared to avoid zstd.h dependency\n'
-        with open(umb, 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        print('Umbrella header successfully overwritten.')
-    else:
-        print('No umbrella header found; skipping.')
-    "
-
-      - name: 清理构建缓存
-        run: |
-         	flutter clean
-         rm -rf ~/Library/Developer/Xcode/DerivedData
-         rm -rf build/ios
+          # D. 执行 Pod 安装
+          cd ios
+          rm -rf Pods Podfile.lock
+          pod install --repo-update
+          cd ..
 
       - name: 8. 编译 iOS App（未签名）
         run: flutter build ios --release --no-codesign
