@@ -6,6 +6,7 @@
 pub mod ffi;
 pub mod constants;
 
+use std::os::unix::io::FromRawFd;
 use std::net::Ipv4Addr;
 use std::ffi::{c_int, c_void};
 #[cfg(target_os = "android")]
@@ -961,20 +962,30 @@ impl SangforVpnService {
         Self::create_tun_with_addr(config, addr)
     }
 
-    #[cfg(not(target_os = "android"))]
+    // 1. 移动端（Android / iOS）：由系统原生 API 创建 VPN 并传入 fd，Rust 不在本地新建网卡
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    fn create_tun_with_addr(_config: &VpnConfig, _addr: Ipv4Addr) -> Result<tun_rs::SyncDevice> {
+        Err(anyhow::anyhow!(
+            "Mobile platforms (Android/iOS) must use system-provided tun_fd via VpnService/NEPacketTunnelProvider"
+        ))
+    }
+
+    // 2. 桌面端（Windows / macOS / Linux）：使用 tun_rs::DeviceBuilder 在 Rust 内部直接初始化网卡
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn create_tun_with_addr(config: &VpnConfig, addr: Ipv4Addr) -> Result<tun_rs::SyncDevice> {
-        let mut builder = tun_rs::Configuration::default();
+        let prefix_len = parse_netmask_to_prefix(&config.tun_netmask)
+            .context("invalid tun_netmask")?;
+
+        // 使用 tun_rs 的 DeviceBuilder 替换 Configuration
+        let mut builder = tun_rs::DeviceBuilder::new();
 
         if let Some(ref name) = config.tun_name {
             builder = builder.name(name);
         }
 
-        let prefix_len = parse_netmask_to_prefix(&config.tun_netmask)
-            .context("invalid tun_netmask")?;
-
         let device = builder
             .ipv4(addr, prefix_len, None)
-            .mtu(config.mtu)
+            .mtu(config.mtu as u16)
             .build_sync()
             .context("failed to create TUN device")?;
 
