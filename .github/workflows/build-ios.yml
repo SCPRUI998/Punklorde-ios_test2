@@ -43,7 +43,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 修正插件 Podspec、生成 Podfile 并强制清洗 Umbrella
+      - name: 7. 修正插件 Podspec、生成 Podfile 并强制清洗 Umbrella + 动态注册 ForegroundTask
         run: |
           # A. 修补 zstandard_ios 和 flutter_foreground_task 的 podspec
           python3 -c "
@@ -59,22 +59,21 @@ jobs:
               with open(ps, 'w', encoding='utf-8') as f:
                   f.write(content)
 
-          # 处理 flutter_foreground_task
+          # 处理 flutter_foreground_task：设置模块名并指定公共头文件（若无则忽略）
           for ps in glob.glob('ios/.symlinks/plugins/flutter_foreground_task/ios/*.podspec', recursive=True):
               with open(ps, 'r', encoding='utf-8') as f:
                   content = f.read()
-              # 强制设置模块名，确保 Objective-C 生成的类名与插件一致
               if 's.module_name' not in content:
                   content += \"\ns.module_name = 'FlutterForegroundTaskPlugin'\n\"
-              # 确保公共头文件包含主头文件
+              # 清除原有 public_header_files，设置为空（因为该类可能无 ObjC 头文件，我们改以动态调用）
               content = re.sub(r's\.public_header_files\s*=\s*\[[^\]]*\]\s*', '', content, flags=re.DOTALL)
               content = re.sub(r's\.public_header_files\s*=\s*[^\n]*\n', '', content)
-              content += \"\ns.public_header_files = 'Classes/FlutterForegroundTaskPlugin.h'\n\"
+              # 不设置 public_header_files，避免编译时缺少头文件
               with open(ps, 'w', encoding='utf-8') as f:
                   f.write(content)
           "
 
-          # B. 动态写入 Podfile（包含 post_install 清洗 umbrella 和设置）
+          # B. 动态写入 Podfile
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
 
@@ -124,7 +123,7 @@ jobs:
                   config.build_settings['DEFINES_MODULE'] = 'NO'
                 end
 
-                # 为 flutter_foreground_task 启用模块化，确保其头文件可见
+                # 为 flutter_foreground_task 启用模块，但无头文件，因此不设置 public
                 if target.name == 'flutter_foreground_task'
                   config.build_settings['DEFINES_MODULE'] = 'YES'
                   config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
@@ -162,39 +161,54 @@ jobs:
           python3 -c "
           import re, os
 
+          # 修改 Bridging Header
           header_path = 'ios/Runner/Runner-Bridging-Header.h'
           if os.path.exists(header_path):
               with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
                   h_content = f.read()
-              # 确保 flutter_foreground_task 头文件以尖括号导入
-              h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '#import <flutter_foreground_task/FlutterForegroundTaskPlugin.h>', h_content)
+              # 移除对 flutter_foreground_task 头文件的直接引用（因为可能不存在）
+              h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '', h_content)
               with open(header_path, 'w', encoding='utf-8') as f:
                   f.write(h_content)
 
+          # 修改 pbxproj
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
 
           pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
-
           if 'DEVELOPMENT_TEAM =' in pbx:
               pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
           else:
               pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tDEVELOPMENT_TEAM = 1234567890;', pbx)
-
           if 'CODE_SIGNING_ALLOWED =' in pbx:
               pbx = re.sub(r'CODE_SIGNING_ALLOWED = [^;]+;', 'CODE_SIGNING_ALLOWED = NO;', pbx)
           else:
               pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;', pbx)
-
           with open(pbx_path, 'w', encoding='utf-8') as f:
               f.write(pbx)
 
+          # 修改 xcconfig
           override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
           for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
               if os.path.exists(cfg):
                   with open(cfg, 'a', encoding='utf-8') as f:
                       f.write(override_flags)
+
+          # ★★★ 修改 GeneratedPluginRegistrant.m：将 FlutterForegroundTaskPlugin 静态调用改为运行时动态调用 ★★★
+          registrant_path = 'ios/Runner/GeneratedPluginRegistrant.m'
+          if os.path.exists(registrant_path):
+              with open(registrant_path, 'r', encoding='utf-8') as f:
+                  content = f.read()
+              # 替换所有 [FlutterForegroundTaskPlugin registerWithRegistrar:xxx] 为动态调用
+              content = re.sub(
+                  r'\[FlutterForegroundTaskPlugin\s+registerWithRegistrar:\s*(\w+)\]',
+                  r'[NSClassFromString(@\"FlutterForegroundTaskPlugin\") registerWithRegistrar:\1]',
+                  content
+              )
+              with open(registrant_path, 'w', encoding='utf-8') as f:
+                  f.write(content)
+              print('✅ Modified GeneratedPluginRegistrant.m to use NSClassFromString.')
           "
 
           # D. 执行 Pod 安装
@@ -203,7 +217,7 @@ jobs:
           pod install --repo-update
           cd ..
 
-          # E. 手动强制重写 umbrella（第二道防线）
+          # E. 手动强制重写 zstandard_ios umbrella（第二道防线）
           python3 -c "
           import glob, os
           for umb in glob.glob('ios/Pods/Target Support Files/zstandard_ios/*umbrella.h'):
@@ -215,14 +229,14 @@ jobs:
                   print(f'✅ Manual overwrite: {umb}')
           "
 
-      - name: 7.5 检查关键文件内容（调试）
+      - name: 7.5 检查关键文件内容（调试，可删除）
         run: |
           echo "====== zstandard_ios-umbrella.h ======"
           cat ios/Pods/Target\ Support\ Files/zstandard_ios/*umbrella.h || echo "Not found"
           echo "======================================"
-          echo "====== flutter_foreground_task header ======"
-          cat ios/Pods/flutter_foreground_task/Classes/FlutterForegroundTaskPlugin.h || echo "Not found"
-          echo "============================================"
+          echo "====== GeneratedPluginRegistrant.m (first 30 lines) ======"
+          head -n 30 ios/Runner/GeneratedPluginRegistrant.m || echo "Not found"
+          echo "=========================================================="
 
       - name: 8. 编译 iOS App（未签名）
         run: |
