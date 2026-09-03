@@ -190,7 +190,7 @@ jobs:
                   with open(cfg, 'a', encoding='utf-8') as f:
                       f.write(override_flags)
 
-          # ★★★ 核心：逐行注释掉 GeneratedPluginRegistrant.m 中的 FlutterForegroundTaskPlugin 调用 ★★★
+          # 核心：逐行注释掉 GeneratedPluginRegistrant.m 中的 FlutterForegroundTaskPlugin 调用
           registrant_path = 'ios/Runner/GeneratedPluginRegistrant.m'
           if os.path.exists(registrant_path):
               with open(registrant_path, 'r', encoding='utf-8') as f:
@@ -198,7 +198,6 @@ jobs:
               new_lines = []
               for line in lines:
                   if 'FlutterForegroundTaskPlugin' in line and 'registerWithRegistrar' in line:
-                      # 如果没被注释，则加上注释
                       if not line.lstrip().startswith('//'):
                           new_lines.append('// ' + line.lstrip())
                       else:
@@ -236,8 +235,9 @@ jobs:
 
       - name: 8. 编译 iOS App（未签名）
         run: |
-          # 构建前再次强制注释（第三道防线）
+          # 构建前再次强制注释（第三道防线），并确保导入 os
           python3 -c "
+          import os
           registrant_path = 'ios/Runner/GeneratedPluginRegistrant.m'
           if os.path.exists(registrant_path):
               with open(registrant_path, 'r', encoding='utf-8') as f:
