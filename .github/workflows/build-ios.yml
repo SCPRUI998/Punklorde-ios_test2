@@ -43,7 +43,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 修正插件 Podspec、生成 Podfile 并注入 Umbrella 头文件清洗逻辑
+      - name: 7. 修正插件 Podspec、生成 Podfile 并强制清洗 Umbrella
         run: |
           # A. 修补 zstandard_ios 本地的 podspec，仅暴露 Plugin 类头文件
           python3 -c "
@@ -58,7 +58,7 @@ jobs:
                   f.write(content)
           "
 
-          # B. 动态写入 Podfile
+          # B. 动态写入 Podfile（post_install 中包含重写 umbrella 逻辑）
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
 
@@ -118,11 +118,19 @@ jobs:
               end
             end
 
-            # 内嵌 Hook：每次 pod install 生成 Umbrella 头文件后自动剥离 zstd.h 引用
-            Dir.glob("#{installer.sandbox.root}/Target Support Files/zstandard_ios/*umbrella.h").each do |umb|
+            # ★ 清洗 umbrella（第一道防线）
+            umbrella_dir = "#{installer.sandbox.root}/Target Support Files/zstandard_ios"
+            Dir.glob("#{umbrella_dir}/*umbrella.h").each do |umb|
               if File.exist?(umb)
-                lines = File.readlines(umb).reject { |l| l.include?('zstd.h') }
-                File.open(umb, 'w') { |f| f.puts(lines) }
+                # 查找插件自身的头文件
+                plugin_headers = Dir.glob("#{installer.sandbox.root}/zstandard_ios/Classes/*Plugin*.h")
+                new_content = if plugin_headers.any?
+                                plugin_headers.map { |h| "#import <zstandard_ios/#{File.basename(h)}>" }.join("\n")
+                              else
+                                "// No plugin headers found – umbrella cleared\n"
+                              end
+                File.write(umb, new_content)
+                puts "✅ post_install: Overwritten umbrella: #{umb}"
               end
             end
           end
@@ -172,8 +180,43 @@ jobs:
           pod install --repo-update
           cd ..
 
+          # ★★★ E. 手动强制重写 umbrella（第二道防线，确保 post_install 生效后再次确认） ★★★
+          python3 -c "
+          import glob, os
+          umbrella_pattern = 'ios/Pods/Target Support Files/zstandard_ios/*umbrella.h'
+          for umb in glob.glob(umbrella_pattern):
+              if os.path.exists(umb):
+                  # 寻找插件自身头文件
+                  plugin_headers = glob.glob('ios/Pods/zstandard_ios/Classes/*Plugin*.h')
+                  if plugin_headers:
+                      new_content = '\n'.join([f'#import <zstandard_ios/{os.path.basename(h)}>' for h in plugin_headers])
+                  else:
+                      new_content = '// umbrella cleared'
+                  with open(umb, 'w', encoding='utf-8') as f:
+                      f.write(new_content)
+                  print(f'✅ Manual overwrite: {umb}')
+          "
+
+      - name: 7.5 检查 Umbrella 内容（调试用，可保留或删除）
+        run: |
+          echo "====== Content of zstandard_ios-umbrella.h ======"
+          cat ios/Pods/Target\ Support\ Files/zstandard_ios/*umbrella.h || echo "Umbrella file not found"
+          echo "================================================"
+
       - name: 8. 编译 iOS App（未签名）
-        run: flutter build ios --release --no-codesign
+        run: |
+          # 在构建前再次确保 umbrella 干净（第三道防线，直接写在构建命令前）
+          python3 -c "
+          import glob, os
+          for umb in glob.glob('ios/Pods/Target Support Files/zstandard_ios/*umbrella.h'):
+              if os.path.exists(umb):
+                  plugin_headers = glob.glob('ios/Pods/zstandard_ios/Classes/*Plugin*.h')
+                  new_content = '\n'.join([f'#import <zstandard_ios/{os.path.basename(h)}>' for h in plugin_headers]) if plugin_headers else '// umbrella cleared'
+                  with open(umb, 'w', encoding='utf-8') as f:
+                      f.write(new_content)
+                  print(f'✅ Pre-build overwrite: {umb}')
+          "
+          flutter build ios --release --no-codesign
 
       - name: 9. 将打包产物封装为 .ipa 格式
         run: |
