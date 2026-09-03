@@ -16,7 +16,7 @@ jobs:
       - name: 2. 配置环境变量文件
         run: cp .env.template .env
 
-      - name: 3. 强制修改 iOS 支持版本为 14.0 (Python 跨平台版本)
+      - name: 3. 强制修改 iOS 支持版本为 14.0
         run: |
           python3 -c "
           import re
@@ -45,14 +45,15 @@ jobs:
         with:
           targets: aarch64-apple-ios
 
-      - name: 5. 安装 Flutter 环境
+      - name: 5. 安装 Flutter 环境并禁用 SPM 冲突
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      - name: 6. 获取依赖与预缓存 CocoaPods
+      - name: 6. 获取依赖与生成代码
         run: |
+          flutter config --no-enable-swift-package-manager
           flutter precache --ios
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
