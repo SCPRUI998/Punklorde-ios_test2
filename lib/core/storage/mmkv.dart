@@ -1,0 +1,17 @@
+import 'package:mmkv/mmkv.dart';
+import 'package:punklorde/core/storage/storage.dart';
+
+late final MMKV defaultMMKV;
+late final MMKV authMMKV;
+late final MMKV scheduleMMKV;
+late final MMKV cacheMMKV;
+late final MMKV resourceMMKV;
+
+Future<void> initMMKV(String cryptKey) async {
+  final storage = StorageService();
+  defaultMMKV = storage.getMMKV('default', cryptKey: cryptKey);
+  authMMKV = storage.getMMKV('auth', cryptKey: cryptKey);
+  scheduleMMKV = storage.getMMKV('schedule', cryptKey: cryptKey);
+  cacheMMKV = storage.getMMKV('cache', cryptKey: cryptKey);
+  resourceMMKV = storage.getMMKV('resource', cryptKey: cryptKey);
+}

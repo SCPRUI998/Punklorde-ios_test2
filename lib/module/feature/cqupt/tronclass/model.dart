@@ -1,0 +1,1 @@
+export 'package:punklorde/module/feature/tronclass/model.dart';
