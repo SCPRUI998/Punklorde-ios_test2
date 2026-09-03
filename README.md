@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 朋克洛德 | Punklorde
 
 **想给这个宇宙多加些玩法，每天都跑图，不无聊么？**
@@ -119,3 +120,7 @@
 > 生命只是一场游戏——对于赛博世界「朋克洛德」的一众黑客，这句玩笑并非戏言。他们游走于网络空间，用名为以太编辑的技术改写现实，将人生编写成一场宏大的游戏。
 
 > Life is just a game — This sentence is no mere jest for hackers from the cyberworld Punklorde.
+=======
+# Punklorde-ios_test
+基于zrurf的Punklorde无法实现IOS系统安装的完善（测试阶段）（若有侵权，联系必删）
+>>>>>>> 577b74e0b343b9c6c8cfe746998671e1e060dd39

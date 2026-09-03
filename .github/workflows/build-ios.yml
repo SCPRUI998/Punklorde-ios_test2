@@ -1,0 +1,55 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: 1. 拉取仓库代码
+        uses: actions/checkout@v4
+
+      - name: 2. 配置环境变量文件
+        run: cp .env.template .env
+
+      - name: 3. 安装 Rust 编译环境
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: 4. 安装 Flutter 环境
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: 5. 获取依赖与生成代码
+        run: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+
+      - name: 6. 安装 iOS 原生 Pods 依赖
+        run: |
+          cd ios
+          pod install --repo-update
+          cd ..
+
+      - name: 7. 编译 iOS App（未签名）
+        run: flutter build ios --release --no-codesign
+
+      - name: 8. 将打包产物封装为 .ipa 格式
+        run: |
+          cd build/ios/iphoneos
+          mkdir Payload
+          mv Runner.app Payload/
+          zip -r Runner.ipa Payload
+
+      - name: 9. 上传 IPA 文件至 GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Punklorde-iOS-Unsigned
+          path: build/ios/iphoneos/Runner.ipa
