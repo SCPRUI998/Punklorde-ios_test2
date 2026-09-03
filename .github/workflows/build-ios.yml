@@ -36,7 +36,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 6. 重写 Podfile 并强行禁用 Xcode 签名校验 (iOS 15.0)
+      - name: 6. 重写 Podfile 并注入伪造 Team ID (iOS 15.0)
         run: |
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
@@ -92,22 +92,34 @@ jobs:
           end
           EOF
 
-          # 使用 Python 强制注入无签名配置并修改 iOS 最低版本
+          # 使用 Python 强行注入伪造 Team ID 绕过 Flutter 前置校验
           python3 -c "
           import re, os
 
-          # 1. 修正 pbxproj 文件中的版本号与签名规则
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
 
+          # 1. 统一 iOS 最低版本为 15.0
           pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
+
+          # 2. 注入伪造的 DEVELOPMENT_TEAM (骗过 Flutter CLI 的校验)
+          if 'DEVELOPMENT_TEAM =' in pbx:
+              pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
+          else:
+              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tDEVELOPMENT_TEAM = 1234567890;', pbx)
+
+          # 3. 设置禁用签名属性
+          if 'CODE_SIGNING_ALLOWED =' in pbx:
+              pbx = re.sub(r'CODE_SIGNING_ALLOWED = [^;]+;', 'CODE_SIGNING_ALLOWED = NO;', pbx)
+          else:
+              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;', pbx)
 
           with open(pbx_path, 'w', encoding='utf-8') as f:
               f.write(pbx)
 
-          # 2. 向 xcconfig 注入强制无签名参数，规避 Flutter 前端 Team 校验
-          override_flags = '\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nDEVELOPMENT_TEAM=\n'
+          # 4. 向 xcconfig 文件追加配置
+          override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\n'
           for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
               if os.path.exists(cfg):
                   with open(cfg, 'a', encoding='utf-8') as f:
