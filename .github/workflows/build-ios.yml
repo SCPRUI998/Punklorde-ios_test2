@@ -41,7 +41,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 动态生成兼容 Podfile、注入 zstd 头文件路径与构建选项
+      - name: 7. 动态生成兼容 Podfile 并补全 C 库头文件映射
         run: |
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
@@ -72,7 +72,7 @@ jobs:
           flutter_ios_podfile_setup
 
           target 'Runner' do
-            # 解决 DKPhotoGallery (Swift) 对 SDWebImage (ObjC) 的模块化依赖要求
+            # 仅对 SDWebImage 开启模块化，满足 DKPhotoGallery 的依赖要求
             pod 'SDWebImage', :modular_headers => true
 
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
@@ -88,12 +88,10 @@ jobs:
                 config.build_settings['ENABLE_BITCODE'] = 'NO'
                 config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
 
-                # 关键修复：强行将 zstandard_ios 源码所有子目录加入 Xcode 头文件搜索路径，彻底解决 zstd.h 找不到问题
+                # 为 zstandard_ios 注入全路径头文件搜索
                 if target.name.include?('zstandard_ios')
                   config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
-                  config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" "${PODS_ROOT}/Headers/Public/**" '
-                  config.build_settings['USER_HEADER_SEARCH_PATHS'] ||= '$(inherited) '
-                  config.build_settings['USER_HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
+                  config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_ROOT}/Target Support Files/zstandard_ios" "${PODS_TARGET_SRCROOT}/**" '
                 end
               end
 
@@ -109,7 +107,7 @@ jobs:
           end
           EOF
 
-          # 使用 Python 处理 Bridge Header 与 Xcode 项目参数
+          # 使用 Python 处理 Bridge Header 与 Xcode 选项
           python3 -c "
           import re, os
 
@@ -150,11 +148,34 @@ jobs:
                       f.write(override_flags)
           "
 
-          # 重新安装 CocoaPods 依赖
+          # 执行 Pod 安装
           cd ios
           rm -rf Pods Podfile.lock
           pod install --repo-update
           cd ..
+
+          # 关键操作：自动提取 zstd 所有头文件并复制到 Umbrella 目录下
+          python3 -c "
+          import os, shutil
+
+          target_dirs = [
+              'ios/Pods/Target Support Files/zstandard_ios',
+              'ios/Pods/Headers/Public/zstandard_ios',
+              'ios/Pods/Headers/Private/zstandard_ios'
+          ]
+          for td in target_dirs:
+              os.makedirs(td, exist_ok=True)
+
+          for root, dirs, files in os.walk('.'):
+              for f in files:
+                  if f.endswith('.h') and ('zstd' in root.lower() or 'zstandard' in root.lower() or f.startswith('zstd')):
+                      src_path = os.path.join(root, f)
+                      for td in target_dirs:
+                          try:
+                              shutil.copy2(src_path, os.path.join(td, f))
+                          except Exception:
+                              pass
+          "
 
       - name: 8. 编译 iOS App（未签名）
         run: flutter build ios --release --no-codesign
