@@ -41,7 +41,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 重写 Podfile 并注入伪造 Team ID (iOS 15.0)
+      - name: 7. 重写 Podfile、修正桥接头文件并注入伪造 Team ID (iOS 15.0)
         run: |
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
@@ -73,6 +73,8 @@ jobs:
           flutter_ios_podfile_setup
 
           target 'Runner' do
+            # 显式开启该插件的 modular_headers，避免头文件找不到
+            pod 'flutter_foreground_task', :modular_headers => true
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
           end
 
@@ -97,10 +99,21 @@ jobs:
           end
           EOF
 
-          # 使用 Python 强行注入伪造 Team ID 绕过 Flutter 前置校验
+          # 使用 Python 修正 Bridging Header 头文件导入 + 强行注入伪造 Team ID
           python3 -c "
           import re, os
 
+          # A. 修复 Runner-Bridging-Header.h 的头文件导入语法
+          header_path = 'ios/Runner/Runner-Bridging-Header.h'
+          if os.path.exists(header_path):
+              with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
+                  h_content = f.read()
+              # 替换为 Objective-C 模块化导入语法
+              h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '@import flutter_foreground_task;', h_content)
+              with open(header_path, 'w', encoding='utf-8') as f:
+                  f.write(h_content)
+
+          # B. 修改 project.pbxproj 配置
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
@@ -108,7 +121,7 @@ jobs:
           # 1. 统一 iOS 最低版本为 15.0
           pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
 
-          # 2. 注入伪造的 DEVELOPMENT_TEAM (骗过 Flutter CLI 的校验)
+          # 2. 注入伪造的 DEVELOPMENT_TEAM
           if 'DEVELOPMENT_TEAM =' in pbx:
               pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
           else:
