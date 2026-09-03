@@ -16,18 +16,23 @@ jobs:
       - name: 2. 配置环境变量文件
         run: cp .env.template .env
 
-      - name: 3. 安装 Rust 编译环境
+      - name: 3. 安装 Go 语言环境（解 Rust build.rs 依赖）
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: 4. 安装 Rust 编译环境
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
 
-      - name: 4. 安装 Flutter 环境并禁用 SPM
+      - name: 5. 安装 Flutter 环境并禁用 SPM
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      - name: 5. 准备 Flutter 依赖与清理缓存
+      - name: 6. 准备 Flutter 依赖与清理缓存
         run: |
           flutter config --no-enable-swift-package-manager
           rm -rf ios/Flutter/ephemeral
@@ -36,7 +41,7 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 6. 重写 Podfile 并注入伪造 Team ID (iOS 15.0)
+      - name: 7. 重写 Podfile 并注入伪造 Team ID (iOS 15.0)
         run: |
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
@@ -132,17 +137,17 @@ jobs:
           pod install --repo-update
           cd ..
 
-      - name: 7. 编译 iOS App（未签名）
+      - name: 8. 编译 iOS App（未签名）
         run: flutter build ios --release --no-codesign
 
-      - name: 8. 将打包产物封装为 .ipa 格式
+      - name: 9. 将打包产物封装为 .ipa 格式
         run: |
           cd build/ios/iphoneos
           mkdir Payload
           mv Runner.app Payload/
           zip -r Runner.ipa Payload
 
-      - name: 9. 上传 IPA 文件至 GitHub Artifacts
+      - name: 10. 上传 IPA 文件至 GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Punklorde-iOS-Unsigned
