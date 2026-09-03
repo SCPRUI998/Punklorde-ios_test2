@@ -41,8 +41,24 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 动态生成兼容 Podfile 并补全 C 库头文件映射
+      - name: 7. 修正插件 Podspec、生成 Podfile 并手术式修复 Umbrella 头文件
         run: |
+          # A. 修补 zstandard_ios 本地的 podspec，禁止把 zstd.h 声明为公开头文件
+          python3 -c "
+          import glob, re
+          for ps in glob.glob('ios/.symlinks/plugins/zstandard_ios/**/*.podspec', recursive=True):
+              with open(ps, 'r', encoding='utf-8') as f:
+                  content = f.read()
+              # 限制仅暴露 Plugin 主类，排除 C 语言头文件
+              if 's.public_header_files' in content:
+                  content = re.sub(r's\.public_header_files\s*=.*', \"s.public_header_files = 'Classes/**/*Plugin*.h'\", content)
+              else:
+                  content += \"\ns.public_header_files = 'Classes/**/*Plugin*.h'\n\"
+              with open(ps, 'w', encoding='utf-8') as f:
+                  f.write(content)
+          "
+
+          # B. 动态写入 Podfile
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
 
@@ -72,7 +88,7 @@ jobs:
           flutter_ios_podfile_setup
 
           target 'Runner' do
-            # 仅对 SDWebImage 开启模块化，满足 DKPhotoGallery 的依赖要求
+            # 解决 DKPhotoGallery (Swift) 对 SDWebImage (ObjC) 的模块化依赖要求
             pod 'SDWebImage', :modular_headers => true
 
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
@@ -88,10 +104,10 @@ jobs:
                 config.build_settings['ENABLE_BITCODE'] = 'NO'
                 config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
 
-                # 为 zstandard_ios 注入全路径头文件搜索
+                # 为 zstandard_ios 内部编译补充 C 头文件搜索路径
                 if target.name.include?('zstandard_ios')
                   config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
-                  config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_ROOT}/Target Support Files/zstandard_ios" "${PODS_TARGET_SRCROOT}/**" '
+                  config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
                 end
               end
 
@@ -107,11 +123,10 @@ jobs:
           end
           EOF
 
-          # 使用 Python 处理 Bridge Header 与 Xcode 选项
+          # C. 修改 project.pbxproj & Bridging Header
           python3 -c "
           import re, os
 
-          # 1. 修复 Bridging-Header 语法
           header_path = 'ios/Runner/Runner-Bridging-Header.h'
           if os.path.exists(header_path):
               with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -120,7 +135,6 @@ jobs:
               with open(header_path, 'w', encoding='utf-8') as f:
                   f.write(h_content)
 
-          # 2. 修改 project.pbxproj 属性
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
@@ -140,7 +154,6 @@ jobs:
           with open(pbx_path, 'w', encoding='utf-8') as f:
               f.write(pbx)
 
-          # 3. 追加 xcconfig 属性
           override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
           for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
               if os.path.exists(cfg):
@@ -148,33 +161,22 @@ jobs:
                       f.write(override_flags)
           "
 
-          # 执行 Pod 安装
+          # D. 执行 Pod 安装
           cd ios
           rm -rf Pods Podfile.lock
           pod install --repo-update
           cd ..
 
-          # 关键操作：自动提取 zstd 所有头文件并复制到 Umbrella 目录下
+          # E. 手术式清洗：从生成的 zstandard_ios-umbrella.h 中彻底抹去 zstd 相关的各种 C 头文件引用
           python3 -c "
-          import os, shutil
-
-          target_dirs = [
-              'ios/Pods/Target Support Files/zstandard_ios',
-              'ios/Pods/Headers/Public/zstandard_ios',
-              'ios/Pods/Headers/Private/zstandard_ios'
-          ]
-          for td in target_dirs:
-              os.makedirs(td, exist_ok=True)
-
-          for root, dirs, files in os.walk('.'):
-              for f in files:
-                  if f.endswith('.h') and ('zstd' in root.lower() or 'zstandard' in root.lower() or f.startswith('zstd')):
-                      src_path = os.path.join(root, f)
-                      for td in target_dirs:
-                          try:
-                              shutil.copy2(src_path, os.path.join(td, f))
-                          except Exception:
-                              pass
+          import glob
+          for umb in glob.glob('ios/Pods/Target Support Files/zstandard_ios/*umbrella.h', recursive=True):
+              with open(umb, 'r', encoding='utf-8') as f:
+                  lines = f.readlines()
+              # 过滤掉任何非 Plugin 接口的底层 C 头文件导入
+              clean_lines = [l for l in lines if 'zstd' not in l.lower() or 'plugin' in l.lower()]
+              with open(umb, 'w', encoding='utf-8') as f:
+                  f.writelines(clean_lines)
           "
 
       - name: 8. 编译 iOS App（未签名）
