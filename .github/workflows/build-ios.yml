@@ -41,11 +41,10 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 重写 Podfile、修正桥接头文件并注入伪造 Team ID (iOS 15.0)
+      - name: 7. 动态生成兼容型 Podfile 并注入构建参数
         run: |
           cat << 'EOF' > ios/Podfile
           platform :ios, '15.0'
-          use_modular_headers!
 
           ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
@@ -83,6 +82,9 @@ jobs:
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
                 config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
                 config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                config.build_settings['ENABLE_BITCODE'] = 'NO'
+                # 关键：允许混编模块引入 C/ObjC 非模块化头文件（解决 zstd.h 与 BaiduMapKit 冲突）
+                config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
               end
 
               # 清空 rust_lib_punklorde 脚本的重复输出路径声明
@@ -97,20 +99,20 @@ jobs:
           end
           EOF
 
-          # 使用 Python 自动修正 Bridging Header 引用 + 注入伪造 Team ID
+          # 使用 Python 自动化处理 Bridge Header 与 Xcode 项目参数
           python3 -c "
           import re, os
 
-          # 1. 自动将 Bridging Header 中的 #import 替换为模块化导入 @import
+          # 1. 修复 Bridging-Header 引用语法（适配标准头文件包含）
           header_path = 'ios/Runner/Runner-Bridging-Header.h'
           if os.path.exists(header_path):
               with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
                   h_content = f.read()
-              h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '@import flutter_foreground_task;', h_content)
+              h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '#import <flutter_foreground_task/FlutterForegroundTaskPlugin.h>', h_content)
               with open(header_path, 'w', encoding='utf-8') as f:
                   f.write(h_content)
 
-          # 2. 修改 project.pbxproj 配置
+          # 2. 修改 project.pbxproj 基础构建选项
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
@@ -130,8 +132,8 @@ jobs:
           with open(pbx_path, 'w', encoding='utf-8') as f:
               f.write(pbx)
 
-          # 3. 向 xcconfig 文件追加配置
-          override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\n'
+          # 3. 注入 xcconfig，允许非模块化包含与禁用签名
+          override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
           for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
               if os.path.exists(cfg):
                   with open(cfg, 'a', encoding='utf-8') as f:
