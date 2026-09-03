@@ -26,9 +26,10 @@ jobs:
         with:
           targets: aarch64-apple-ios
 
-      - name: 5. 安装 Flutter 环境并禁用 SPM
+      - name: 5. 安装 Flutter 3.44.4 并禁用 SPM
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.44.4'   # 固定为您本地的版本
           channel: 'stable'
           cache: true
 
@@ -46,12 +47,19 @@ jobs:
 
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 7. 修复 zstandard_ios 并安装 CocoaPods
+      - name: 6.5 修正 GeneratedPluginRegistrant.m 中的类名
+        run: |
+          # 将 FlutterForegroundTaskPlugin 替换为 SwiftFlutterForegroundTaskPlugin（Xcode 提示的候选）
+          if [ -f "ios/Runner/GeneratedPluginRegistrant.m" ]; then
+            sed -i '' 's/FlutterForegroundTaskPlugin/SwiftFlutterForegroundTaskPlugin/g' ios/Runner/GeneratedPluginRegistrant.m
+            echo "✅ Replaced class name in GeneratedPluginRegistrant.m"
+          fi
+
+      - name: 7. 修复 zstandard_ios、配置 Podfile 并安装 CocoaPods
         run: |
           set -e
 
           echo "===== 修复 zstandard_ios podspec ====="
-
           python3 - <<'PY'
           import glob
           import re
@@ -65,21 +73,17 @@ jobs:
               with open(ps, 'r', encoding='utf-8') as f:
                   content = f.read()
 
-              # 删除原有 public_header_files
               content = re.sub(
                   r's\.public_header_files\s*=\s*\[[^\]]*\]\s*',
                   '',
                   content,
                   flags=re.DOTALL
               )
-
               content = re.sub(
                   r's\.public_header_files\s*=\s*[^\n]*\n',
                   '',
                   content
               )
-
-              # 添加正确的插件头文件范围
               if "s.public_header_files = 'Classes/**/*Plugin*.h'" not in content:
                   content += "\ns.public_header_files = 'Classes/**/*Plugin*.h'\n"
 
@@ -89,54 +93,28 @@ jobs:
           print("zstandard_ios podspec patch completed.")
           PY
 
-          echo "===== 检查 flutter_foreground_task 配置 ====="
-
-          if [ -d "ios/.symlinks/plugins/flutter_foreground_task" ]; then
-            echo "flutter_foreground_task plugin found."
-
-            find ios/.symlinks/plugins/flutter_foreground_task -maxdepth 3 \
-              -type f \
-              \( -name "*.podspec" -o -name "*.swift" -o -name "*.h" \) \
-              -print
-          else
-            echo "flutter_foreground_task plugin directory not found."
-          fi
-
-          echo "===== 清理 CocoaPods ====="
-
+          echo "===== 配置 Podfile（启用模块化头部） ====="
           cd ios
 
+          # 在 Podfile 顶部插入 use_modular_headers!（如果不存在）
+          if ! grep -q "use_modular_headers!" Podfile; then
+            sed -i '' '1i\
+          use_modular_headers!
+          ' Podfile
+            echo "Added use_modular_headers! to Podfile."
+          else
+            echo "use_modular_headers! already present."
+          fi
+
+          echo "===== 清理并安装 CocoaPods ====="
           rm -rf Pods
           rm -f Podfile.lock
-
           pod deintegrate || true
           pod install --repo-update
 
           cd ..
 
-      - name: 7.5 检查 FlutterForegroundTask 插件注册
-        run: |
-          echo "===== GeneratedPluginRegistrant.m ====="
-
-          if [ -f "ios/Runner/GeneratedPluginRegistrant.m" ]; then
-            grep -n -E "FlutterForegroundTaskPlugin|SwiftFlutterForegroundTaskPlugin" \
-              ios/Runner/GeneratedPluginRegistrant.m || true
-          fi
-
-          echo "===== flutter_foreground_task Pod ====="
-
-          if [ -d "ios/Pods/flutter_foreground_task" ]; then
-            find ios/Pods/flutter_foreground_task \
-              -maxdepth 3 \
-              -type f \
-              | sort
-          fi
-
-          echo "===== Flutter plugin package ====="
-
-          flutter pub deps | grep -A 3 -B 2 "flutter_foreground_task" || true
-
-      - name: 7.6 清洗 zstandard_ios umbrella
+      - name: 7.5 清洗 zstandard_ios umbrella
         run: |
           set -e
 
@@ -183,8 +161,12 @@ jobs:
           echo "===== CocoaPods Version ====="
           pod --version
 
-          echo "===== Build iOS ====="
+          echo "===== 再次确保类名替换（第三道防线） ====="
+          if [ -f "ios/Runner/GeneratedPluginRegistrant.m" ]; then
+            sed -i '' 's/FlutterForegroundTaskPlugin/SwiftFlutterForegroundTaskPlugin/g' ios/Runner/GeneratedPluginRegistrant.m
+          fi
 
+          echo "===== Build iOS ====="
           flutter build ios \
             --release \
             --no-codesign \
@@ -196,7 +178,6 @@ jobs:
 
           echo "===== build/ios/iphoneos ====="
           ls -lah build/ios/iphoneos
-
           test -d build/ios/iphoneos/Runner.app
 
       - name: 10. 打包为 IPA
@@ -204,14 +185,10 @@ jobs:
           set -e
 
           cd build/ios/iphoneos
-
           rm -rf Payload
           mkdir Payload
-
           mv Runner.app Payload/
-
           zip -r Runner.ipa Payload
-
           ls -lh Runner.ipa
 
       - name: 11. 上传 IPA
