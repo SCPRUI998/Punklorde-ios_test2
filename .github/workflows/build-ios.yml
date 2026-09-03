@@ -73,8 +73,6 @@ jobs:
           flutter_ios_podfile_setup
 
           target 'Runner' do
-            # 显式开启该插件的 modular_headers，避免头文件找不到
-            pod 'flutter_foreground_task', :modular_headers => true
             flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
           end
 
@@ -99,35 +97,31 @@ jobs:
           end
           EOF
 
-          # 使用 Python 修正 Bridging Header 头文件导入 + 强行注入伪造 Team ID
+          # 使用 Python 自动修正 Bridging Header 引用 + 注入伪造 Team ID
           python3 -c "
           import re, os
 
-          # A. 修复 Runner-Bridging-Header.h 的头文件导入语法
+          # 1. 自动将 Bridging Header 中的 #import 替换为模块化导入 @import
           header_path = 'ios/Runner/Runner-Bridging-Header.h'
           if os.path.exists(header_path):
               with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
                   h_content = f.read()
-              # 替换为 Objective-C 模块化导入语法
               h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '@import flutter_foreground_task;', h_content)
               with open(header_path, 'w', encoding='utf-8') as f:
                   f.write(h_content)
 
-          # B. 修改 project.pbxproj 配置
+          # 2. 修改 project.pbxproj 配置
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
 
-          # 1. 统一 iOS 最低版本为 15.0
           pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
 
-          # 2. 注入伪造的 DEVELOPMENT_TEAM
           if 'DEVELOPMENT_TEAM =' in pbx:
               pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
           else:
               pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tDEVELOPMENT_TEAM = 1234567890;', pbx)
 
-          # 3. 设置禁用签名属性
           if 'CODE_SIGNING_ALLOWED =' in pbx:
               pbx = re.sub(r'CODE_SIGNING_ALLOWED = [^;]+;', 'CODE_SIGNING_ALLOWED = NO;', pbx)
           else:
@@ -136,7 +130,7 @@ jobs:
           with open(pbx_path, 'w', encoding='utf-8') as f:
               f.write(pbx)
 
-          # 4. 向 xcconfig 文件追加配置
+          # 3. 向 xcconfig 文件追加配置
           override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\n'
           for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
               if os.path.exists(cfg):
