@@ -34,10 +34,10 @@ jobs:
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 6. 重写标准 Podfile 并手动安装 CocoaPods 依赖
+      - name: 6. 重写标准 Podfile 并手动安装 CocoaPods 依赖 (iOS 15.0)
         run: |
           cat << 'EOF' > ios/Podfile
-          platform :ios, '14.0'
+          platform :ios, '15.0'
           use_modular_headers!
 
           ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -73,19 +73,19 @@ jobs:
             installer.pods_project.targets.each do |target|
               flutter_additional_ios_build_settings(target)
               target.build_configurations.each do |config|
-                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
               end
             end
           end
           EOF
 
-          # 强制修改 Xcode 工程最低版本
+          # 强制修改 Xcode 工程最低版本至 15.0
           python3 -c "
           import re
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
-          pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 14.0;', pbx)
+          pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
           with open(pbx_path, 'w', encoding='utf-8') as f:
               f.write(pbx)
           "
