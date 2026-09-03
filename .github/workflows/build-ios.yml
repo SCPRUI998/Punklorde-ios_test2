@@ -16,27 +16,30 @@ jobs:
       - name: 2. 配置环境变量文件
         run: cp .env.template .env
 
-      - name: 3. 安装 Rust 编译环境
+      - name: 3. 强制修改 iOS 支持版本为 14.0
+        run: |
+          # 修正 Podfile 配置
+          sed -i '' "s/# platform :ios, .*/platform :ios, '14.0'/g" ios/Podfile
+          sed -i '' "s/platform :ios, .*/platform :ios, '14.0'/g" ios/Podfile
+          # 修正 Xcode 工程内部所有的最低版本设置
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*/IPHONEOS_DEPLOYMENT_TARGET = 14.0/g' ios/Runner.xcodeproj/project.pbxproj
+
+      - name: 4. 安装 Rust 编译环境
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
 
-      - name: 4. 安装 Flutter 环境
+      - name: 5. 安装 Flutter 环境
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      - name: 5. 获取依赖与生成代码
+      - name: 6. 获取依赖与生成代码
         run: |
+          flutter precache --ios
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
-
-      - name: 6. 安装 iOS 原生 Pods 依赖
-        run: |
-          cd ios
-          pod install --repo-update
-          cd ..
 
       - name: 7. 编译 iOS App（未签名）
         run: flutter build ios --release --no-codesign
