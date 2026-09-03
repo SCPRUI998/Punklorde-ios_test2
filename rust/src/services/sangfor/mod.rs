@@ -963,7 +963,7 @@ impl SangforVpnService {
 
     #[cfg(not(target_os = "android"))]
     fn create_tun_with_addr(config: &VpnConfig, addr: Ipv4Addr) -> Result<tun_rs::SyncDevice> {
-        let mut builder = tun_rs::DeviceBuilder::new();
+        let mut builder = tun_rs::Configuration::default();
 
         if let Some(ref name) = config.tun_name {
             builder = builder.name(name);
