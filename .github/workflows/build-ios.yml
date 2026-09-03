@@ -96,7 +96,7 @@ jobs:
           cd ..
 
       - name: 7. 编译 iOS App（未签名，禁用 Flutter 自动覆盖 Pods）
-        run: flutter build ios --release --no-codesign --no-pod-install
+        run: flutter build ios --release --no-codesign 
 
       - name: 8. 将打包产物封装为 .ipa 格式
         run: |
