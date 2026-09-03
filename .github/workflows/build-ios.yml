@@ -16,13 +16,29 @@ jobs:
       - name: 2. 配置环境变量文件
         run: cp .env.template .env
 
-      - name: 3. 强制修改 iOS 支持版本为 14.0
+      - name: 3. 强制修改 iOS 支持版本为 14.0 (Python 跨平台版本)
         run: |
-          # 修正 Podfile 配置
-          sed -i '' "s/# platform :ios, .*/platform :ios, '14.0'/g" ios/Podfile
-          sed -i '' "s/platform :ios, .*/platform :ios, '14.0'/g" ios/Podfile
-          # 修正 Xcode 工程内部所有的最低版本设置
-          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*/IPHONEOS_DEPLOYMENT_TARGET = 14.0/g' ios/Runner.xcodeproj/project.pbxproj
+          python3 -c "
+          import re
+
+          # 修改 Podfile
+          with open('ios/Podfile', 'r', encoding='utf-8', errors='ignore') as f:
+              content = f.read()
+          if 'platform :ios' in content:
+              content = re.sub(r'#?\s*platform :ios,.*', \"platform :ios, '14.0'\", content)
+          else:
+              content = \"platform :ios, '14.0'\n\" + content
+          with open('ios/Podfile', 'w', encoding='utf-8') as f:
+              f.write(content)
+
+          # 修改 Xcode 工程配置
+          pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
+          with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
+              pbx = f.read()
+          pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 14.0;', pbx)
+          with open(pbx_path, 'w', encoding='utf-8') as f:
+              f.write(pbx)
+          "
 
       - name: 4. 安装 Rust 编译环境
         uses: dtolnay/rust-toolchain@stable
@@ -35,7 +51,7 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 6. 获取依赖与生成代码
+      - name: 6. 获取依赖与预缓存 CocoaPods
         run: |
           flutter precache --ios
           flutter pub get
