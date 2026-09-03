@@ -16,22 +16,29 @@ jobs:
       - name: 2. 配置环境变量文件
         run: cp .env.template .env
 
-      - name: 3. 强制修改 iOS 支持版本为 14.0
+      - name: 3. 修复 Podfile (开启 modular_headers 与强制 iOS 14.0)
         run: |
           python3 -c "
           import re
 
-          # 修改 Podfile
+          # 读取并修改 Podfile
           with open('ios/Podfile', 'r', encoding='utf-8', errors='ignore') as f:
               content = f.read()
+
+          # 确保开启 modular_headers
+          if 'use_modular_headers!' not in content:
+              content = \"use_modular_headers!\n\" + content
+
+          # 确保设置 platform 为 iOS 14.0
           if 'platform :ios' in content:
               content = re.sub(r'#?\s*platform :ios,.*', \"platform :ios, '14.0'\", content)
           else:
               content = \"platform :ios, '14.0'\n\" + content
+
           with open('ios/Podfile', 'w', encoding='utf-8') as f:
               f.write(content)
 
-          # 修改 Xcode 工程配置
+          # 修正 Xcode 工程内部所有的最低版本设置
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
