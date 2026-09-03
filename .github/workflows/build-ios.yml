@@ -47,14 +47,6 @@ jobs:
 
           dart run build_runner build --delete-conflicting-outputs
 
-      - name: 6.5 注释 GeneratedPluginRegistrant.m 中的问题调用
-        run: |
-          if [ -f "ios/Runner/GeneratedPluginRegistrant.m" ]; then
-            # 注释所有包含 FlutterForegroundTaskPlugin 和 registerWithRegistrar 的行
-            sed -i '' '/FlutterForegroundTaskPlugin.*registerWithRegistrar/s/^/\/\//' ios/Runner/GeneratedPluginRegistrant.m
-            echo "✅ Commented out FlutterForegroundTaskPlugin registration."
-          fi
-
       - name: 7. 修复 zstandard_ios、统一部署目标、生成 Podfile 并安装 CocoaPods
         run: |
           set -e
@@ -142,6 +134,12 @@ jobs:
                   config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
                   config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
                   config.build_settings['DEFINES_MODULE'] = 'NO'
+                end
+
+                # 针对 flutter_foreground_task 强制启用模块
+                if target.name == 'flutter_foreground_task'
+                  config.build_settings['DEFINES_MODULE'] = 'YES'
+                  config.build_settings['SWIFT_OBJC_INTERFACE_HEADER_NAME'] = 'flutter_foreground_task-Swift.h'
                 end
               end
 
@@ -265,7 +263,35 @@ jobs:
               print(f"Updated umbrella: {umb}")
           PY
 
-      - name: 8. 编译 iOS App（未签名）
+      # ===== 关键修补：在 pod install 之后，build 之前，强制注释问题行 =====
+      - name: 8. 修补 GeneratedPluginRegistrant.m（注释所有 FlutterForegroundTaskPlugin 行）
+        run: |
+          FILE="ios/Runner/GeneratedPluginRegistrant.m"
+          if [ ! -f "$FILE" ]; then
+            echo "⚠️ $FILE 不存在，跳过修补"
+            exit 0
+          fi
+
+          echo "===== 修补前检查 ====="
+          grep -n "FlutterForegroundTaskPlugin" "$FILE" || echo "未找到 FlutterForegroundTaskPlugin"
+
+          # 注释所有包含 FlutterForegroundTaskPlugin 的行（无论是否有 registerWithRegistrar）
+          sed -i '' '/FlutterForegroundTaskPlugin/ s/^/\/\//' "$FILE"
+
+          echo "===== 修补后检查 ====="
+          grep -n "FlutterForegroundTaskPlugin" "$FILE" || echo "已全部注释"
+
+          echo "✅ GeneratedPluginRegistrant.m 修补完成"
+
+      - name: 8.5 再次确认修补（在构建前再执行一次，以防被覆盖）
+        run: |
+          FILE="ios/Runner/GeneratedPluginRegistrant.m"
+          if [ -f "$FILE" ]; then
+            sed -i '' '/FlutterForegroundTaskPlugin/ s/^/\/\//' "$FILE"
+            echo "✅ 二次确认：所有 FlutterForegroundTaskPlugin 行已注释"
+          fi
+
+      - name: 9. 编译 iOS App（未签名）并保存详细日志
         run: |
           set -e
 
@@ -277,13 +303,6 @@ jobs:
 
           echo "===== CocoaPods Version ====="
           pod --version
-
-          echo "===== 再次强制注释问题行（第三道防线） ====="
-          if [ -f "ios/Runner/GeneratedPluginRegistrant.m" ]; then
-            sed -i '' '/FlutterForegroundTaskPlugin.*registerWithRegistrar/s/^/\/\//' ios/Runner/GeneratedPluginRegistrant.m
-            sed -i '' 's/FlutterForegroundTaskPlugin/SwiftFlutterForegroundTaskPlugin/g' ios/Runner/GeneratedPluginRegistrant.m
-            echo "✅ Pre-build: commented out and replaced class name."
-          fi
 
           echo "===== 再次清洗 umbrella（第三道防线） ====="
           python3 - <<'PY'
@@ -297,13 +316,26 @@ jobs:
                   print(f'✅ Pre-build overwrite umbrella: {umb}')
           PY
 
-          echo "===== Build iOS ====="
+          echo "===== 开始构建（详细日志将保存到 build.log） ====="
           flutter build ios \
             --release \
             --no-codesign \
-            -v
+            -v 2>&1 | tee build.log
 
-      - name: 9. 检查编译产物
+          # 检查构建结果
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "构建失败，请查看 build.log"
+            exit 1
+          fi
+
+      - name: 9.5 上传构建日志（无论成功与否）
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+        if: always()
+
+      - name: 10. 检查编译产物
         run: |
           set -e
 
@@ -311,7 +343,7 @@ jobs:
           ls -lah build/ios/iphoneos
           test -d build/ios/iphoneos/Runner.app
 
-      - name: 10. 打包为 IPA
+      - name: 11. 打包为 IPA
         run: |
           set -e
 
@@ -322,7 +354,7 @@ jobs:
           zip -r Runner.ipa Payload
           ls -lh Runner.ipa
 
-      - name: 11. 上传 IPA
+      - name: 12. 上传 IPA
         uses: actions/upload-artifact@v4
         with:
           name: Punklorde-iOS-Unsigned
