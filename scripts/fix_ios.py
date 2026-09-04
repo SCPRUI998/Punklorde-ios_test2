@@ -13,8 +13,8 @@ def main():
         with open(ps, 'w', encoding='utf-8') as f:
             f.write(content)
 
-    # B. 写入 Podfile
-    podfile_content = '''platform :ios, '15.0'
+    # B. 写入 Podfile（设置 iOS 最低版本为 17.0）
+    podfile_content = '''platform :ios, '17.0'
 
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
@@ -50,7 +50,7 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
     target.build_configurations.each do |config|
-      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '17.0'
       config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
       config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
       config.build_settings['ENABLE_BITCODE'] = 'NO'
@@ -83,7 +83,7 @@ end
     with open('ios/Podfile', 'w', encoding='utf-8') as f:
         f.write(podfile_content)
 
-    # C. 修改 Xcode 项目属性与 Header 引用
+    # C. 修改 Xcode 项目属性（目标设为 17.0）与 Header 引用
     header_path = 'ios/Runner/Runner-Bridging-Header.h'
     if os.path.exists(header_path):
         with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -96,7 +96,7 @@ end
     with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
         pbx = f.read()
 
-    pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
+    pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 17.0;', pbx)
 
     if 'DEVELOPMENT_TEAM =' in pbx:
         pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
@@ -111,7 +111,7 @@ end
     with open(pbx_path, 'w', encoding='utf-8') as f:
         f.write(pbx)
 
-    override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
+    override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\nIPHONEOS_DEPLOYMENT_TARGET=17.0\n'
     for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
         if os.path.exists(cfg):
             with open(cfg, 'a', encoding='utf-8') as f:
