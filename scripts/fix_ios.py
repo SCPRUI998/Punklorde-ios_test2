@@ -3,12 +3,12 @@ import glob
 import re
 
 def main():
-    # 0. 全局配置 ~/.curlrc 强制 curl 使用 HTTP/1.1 并增加重试，解决百度 CDN 握手被拒问题
+    # 1. 設置 ~/.curlrc 解決百度 CDN 網絡握手被拒（Connection reset by peer）问题
     curlrc = os.path.expanduser('~/.curlrc')
-    with open(curlrc, 'w') as f:
+    with open(curlrc, 'w', encoding='utf-8') as f:
         f.write('http1.1\nretry = 10\nretry-delay = 2\nretry-max-time = 120\n')
 
-    # A. 修补 zstandard_ios 本地的 podspec
+    # 2. 修補 zstandard_ios 本地的 podspec
     for ps in glob.glob('ios/.symlinks/plugins/zstandard_ios/**/*.podspec', recursive=True):
         with open(ps, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -18,7 +18,7 @@ def main():
         with open(ps, 'w', encoding='utf-8') as f:
             f.write(content)
 
-    # B. 写入 Podfile
+    # 3. 生成完整的 Podfile
     podfile_content = '''platform :ios, '17.0'
 
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -88,7 +88,7 @@ end
     with open('ios/Podfile', 'w', encoding='utf-8') as f:
         f.write(podfile_content)
 
-    # C. 修改 Xcode 项目属性与 Header 引用
+    # 4. 修改 Bridging Header 引用
     header_path = 'ios/Runner/Runner-Bridging-Header.h'
     if os.path.exists(header_path):
         with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -97,6 +97,7 @@ end
         with open(header_path, 'w', encoding='utf-8') as f:
             f.write(h_content)
 
+    # 5. 修改 Xcode 项目属性为 iOS 17.0
     pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
     with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
         pbx = f.read()
