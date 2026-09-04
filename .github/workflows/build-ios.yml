@@ -15,11 +15,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: 1.1 强制清理 macOS 文件扩展属性 (xattr)
+      - name: 1.1 强制清理 macOS 文件扩展属性与修复文件权限
         run: |
           echo "===== 清理 com.apple.provenance 及其他扩展属性 ====="
-          sudo find . -exec xattr -c {} + 2>/dev/null || true
-          sudo xattr -cr . || true
+          # 1. 递归清除所有 macOS 扩展属性
+          sudo xattr -cr . 2>/dev/null || true
+          
+          # 2. 核心修正：将所有文件所有权还给 runner 用户，防止 flutter build 时无权限修改
+          sudo chown -R $(whoami) .
 
       - name: 2. 配置环境变量文件
         run: cp .env.template .env || true
@@ -254,46 +257,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pods-
 
-      - name: 9. 安装 CocoaPods 依赖与 zstandard 补丁
+      - name: 9. 修复 zstandard_ios 并安装 CocoaPods 依赖
         run: |
           set -e
-          cd ios
-          pod install --repo-update
-          cd ..
 
-          echo "===== 修复 zstandard_ios podspec ====="
+          echo "===== 1. 修复 zstandard_ios.podspec 语法位置 ====="
           python3 - <<'PY'
           import glob
           import re
 
-          for ps in glob.glob(
-              'ios/.symlinks/plugins/zstandard_ios/**/*.podspec',
-              recursive=True
-          ):
+          for ps in glob.glob('ios/.symlinks/plugins/zstandard_ios/**/*.podspec', recursive=True):
               print(f"Processing: {ps}")
 
               with open(ps, 'r', encoding='utf-8') as f:
                   content = f.read()
 
-              content = re.sub(
-                  r's\.public_header_files\s*=\s*\[[^\]]*\]\s*',
-                  '',
-                  content,
-                  flags=re.DOTALL
-              )
-              content = re.sub(
-                  r's\.public_header_files\s*=\s*[^\n]*\n',
-                  '',
-                  content
-              )
-              if "s.public_header_files = 'Classes/**/*Plugin*.h'" not in content:
-                  content += "\ns.public_header_files = 'Classes/**/*Plugin*.h'\n"
+              # 清除既有的 public_header_files 設定
+              content = re.sub(r's\.public_header_files\s*=\s*\[[^\]]*\]\s*', '', content, flags=re.DOTALL)
+              content = re.sub(r's\.public_header_files\s*=\s*[^\n]*\n', '', content)
+
+              # 確保 inserted 代碼在 end 之前（區塊內部）
+              new_setting = "  s.public_header_files = 'Classes/**/*Plugin*.h'\n"
+              if "Classes/**/*Plugin*.h" not in content:
+                  if 'end' in content:
+                      last_end_idx = content.rfind('end')
+                      content = content[:last_end_idx] + new_setting + content[last_end_idx:]
+                  else:
+                      content += "\n" + new_setting
 
               with open(ps, 'w', encoding='utf-8') as f:
                   f.write(content)
 
           print("zstandard_ios podspec patch completed.")
           PY
+
+          echo "===== 2. 执行 pod install ====="
+          cd ios
+          pod install --repo-update
+          cd ..
 
       - name: 9.1 修正 PhaseScript 及 Pods 脚本执行权限
         run: |
