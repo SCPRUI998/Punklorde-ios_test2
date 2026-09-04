@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_baidu_mapapi_base/flutter_baidu_mapapi_base.dart';
 import 'package:flutter_bmflocation/flutter_bmflocation.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package0/flutter_inappwebview/flutter_inappwebview.dart'; // 如果是 package，保留正確引用
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 
 import 'package:punklorde/app/main.dart';
@@ -26,15 +26,16 @@ import 'package:punklorde/module/service/lbs/location.dart';
 import 'package:punklorde/module/service/lbs/map.dart';
 import 'package:punklorde/src/rust/frb_generated.dart';
 import 'package:punklorde/utils/etc/style.dart';
-import 'package:punklorde/utils/notification.dart';
+import 'package0/utils/notification.dart';
 import 'package:punklorde/utils/permission.dart';
 
 Future<void> main() async {
-  // 初始化 Rust lib
-  await RustLib.init();
-
+  // 1. 最優先初始化 Flutter 框架綁定
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+
+  // 2. 初始化 Rust lib
+  await RustLib.init();
 
   pkldFileHandler.init();
   applySystemUiStyle(
@@ -43,63 +44,62 @@ Future<void> main() async {
         Brightness.dark,
   );
 
-  // 初始化设备状态
+  // 初始化設備狀態
   await initDeviceStatus();
 
-  // 初始化存储服务
+  // 初始化存儲服務
   await StorageService().init();
   await initMMKV(Env.keyMmkv);
   await initStatus();
 
-  // 初始化 i18n（应用持久化的语言设置）
+  // 初始化 i18n（應用持久化的語言設置）
   applyStoredLocale();
 
-  // 初始化资源管理器
+  // 初始化資源管理器
   await setupResourceManager(dio: Dio());
 
-  // 加载持久化的源列表（覆盖默认值）
+  // 加載持久化的源列表（覆蓋預設值）
   await loadResourceStatus();
 
-  // ==================== iOS 百度地图 SDK 初始化 ====================
-  if (Platform.isIOS) {
-    // 1. 设置同意隐私政策
+  // ==================== iOS 百度地圖 SDK 初始化 ====================
+  if (!kIsWeb && Platform.isIOS) {
+    // 1. 設置同意隱私政策
     BMFMapSDK.setAgreePrivacy(true);
     
-    // LocationFlutterPlugin 的 setAgreePrivacy 为实例方法
+    // LocationFlutterPlugin 的 setAgreePrivacy 為實例方法
     LocationFlutterPlugin locationPlugin = LocationFlutterPlugin();
     locationPlugin.setAgreePrivacy(true);
-
-    // 2. 百度地图 SDK 4.0.1 的 API Key 已改由 ios/Runner/Info.plist 统一读取：
-    // <key>BMFMapApiKey</key>
-    // <string>w4Lshb3n8IIHdPyYkKL91SQ1TxltmOtC</string>
   }
   // =======================================================================
 
-  // 初始化服务
+  // 初始化服務
   await initMapService();
   initLocationService();
 
   // 初始化通知插件
   initNoticationPlugin();
 
-  // 获取权限
-  requestPermission();
+  // 獲取權限
+  await requestPermission();
 
-  // 加载状态
-  await loadStatus().then((v) {
-    // 同步状态
-    syncStatus();
-  });
+  // 加載與同步狀態（修復非同步等待）
+  try {
+    await loadStatus();
+    await syncStatus();
+  } catch (e) {
+    debugPrint('Load or sync status failed: $e');
+  }
 
   if (kDebugMode) {
     await setDebugger();
   }
 
+  // 移除 Splash 畫面並啟動 App
   FlutterNativeSplash.remove();
   runApp(TranslationProvider(child: MainMobileApp()));
 }
 
-// 初始化状态
+// 初始化狀態
 Future<void> initStatus() async {
   try {
     loadAppStatus();
@@ -117,7 +117,7 @@ Future<void> initStatus() async {
   initMapStatus();
 }
 
-// 加载状态
+// 加載狀態
 Future<void> loadStatus() async {
   try {
     await loadSemester();
@@ -130,9 +130,9 @@ Future<void> loadStatus() async {
   initChaoxingServices();
 }
 
-// 同步状态
+// 同步狀態
 Future<void> syncStatus() async {
-  // 刷新所有已过时的凭据
+  // 刷新所有已過期的憑據
   await authManager.refreshAllOutDated();
   if (lastScheduleUpdateTimeSignal.value == null ||
       DateTime.now().difference(
@@ -141,7 +141,7 @@ Future<void> syncStatus() async {
           const Duration(days: 1)) {
     await pullSchedule();
   }
-  // 更新小组件
+  // 更新小組件
   await ScheduleWidgetService.updateWidget();
 }
 
