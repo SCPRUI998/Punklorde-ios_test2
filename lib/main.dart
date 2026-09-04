@@ -1,9 +1,9 @@
-import 'dart:io'; // 1. 导入 Platform 判断
+import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_baidu_mapapi_base/flutter_baidu_mapapi_base.dart'; // 2. 导入百度地图 Base 插件
-import 'package:flutter_bmflocation/flutter_bmflocation.dart'; // 3. 导入百度定位插件
+import 'package:flutter_baidu_mapapi_base/flutter_baidu_mapapi_base.dart';
+import 'package:flutter_bmflocation/flutter_bmflocation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:punklorde/app/main.dart';
 import 'package:punklorde/core/account/pkld_file_handler.dart';
@@ -21,7 +21,7 @@ import 'package:punklorde/env.dart';
 import 'package:punklorde/i18n/strings.g.dart';
 import 'package:punklorde/module/feature/chaoxing/index.dart';
 import 'package:punklorde/module/service/lbs/location.dart';
-import 'package:punklorde/module/service/lbs/map.dart';
+import 'package0/module/service/lbs/map.dart';
 import 'package:punklorde/src/rust/frb_generated.dart';
 import 'package:punklorde/utils/etc/style.dart';
 import 'package:punklorde/utils/notification.dart';
@@ -59,15 +59,14 @@ Future<void> main() async {
   // 加载持久化的源列表（覆盖默认值）
   await loadResourceStatus();
 
-  // ==================== [新增] iOS 百度地图 SDK 初始化 ====================
+  // ==================== iOS 百度地图 SDK 初始化 ====================
   if (Platform.isIOS) {
-    // 1. 设置隐私合规声明（必须先调用）
+    // 1. 设置隐私合规声明
     BMFMapSDK.setAgreementAndPrivacy(true);
-    LocationFlutterPlugin.setAgreementAndPrivacy(true);
+    LocationFlutterPlugin().setAgreementAndPrivacy(true);
 
-    // 2. 注入刚刚在百度开放平台申请的 iOS AK
-    // ⚠️ 请将下面的 '替换为你的iOS_AK' 改为真实获得的 AK 字符串
-    BMFMapSDK.setApiKeyAndAgreement('w4Lshb3n8IIHdPyYkKL91SQ1TxltmOtC');
+    // 2. 注入 iOS AK (需传入两个字符串参数)
+    BMFMapSDK.setApiKeyAndAgreement('w4Lshb3n8IIHdPyYkKL91SQ1TxltmOtC', 'true');
   }
   // =======================================================================
 
@@ -142,8 +141,8 @@ Future<void> syncStatus() async {
 }
 
 Future<void> requestPermission() async {
-  await checkAndRequestPermission(.notice);
-  await checkAndRequestPermission(.microphone);
+  await checkAndRequestPermission(PermissionType.notice);
+  await checkAndRequestPermission(PermissionType.microphone);
 }
 
 Future<void> setDebugger() async {
