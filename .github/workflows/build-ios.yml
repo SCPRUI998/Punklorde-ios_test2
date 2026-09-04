@@ -26,9 +26,14 @@ jobs:
       - name: 4. 安装 Rust 编译环境与构建缓存
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
 
-      - name: 4.1 Rust 依赖与编译产物缓存
+      - name: 4.1 将 Cargo/Rust 工具暴露给 Xcode PhaseScript
+        run: |
+          sudo mkdir -p /usr/local/bin
+          sudo ln -sf ~/.cargo/bin/* /usr/local/bin/
+
+      - name: 4.2 Rust 依赖与编译产物缓存
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -157,6 +162,9 @@ jobs:
                 config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
                 config.build_settings['COMPILER_INDEX_STORE_ENABLE'] = 'NO'
 
+                # 禁用用户脚本沙盒，防止 Cargokit 构建被 Xcode 拦截
+                config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+
                 if target.name.include?('zstandard_ios')
                   config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
                   config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
@@ -229,6 +237,12 @@ jobs:
           else:
               pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;', pbx)
 
+          # 禁用 Xcode 脚本沙盒
+          if 'ENABLE_USER_SCRIPT_SANDBOXING =' in pbx:
+              pbx = re.sub(r'ENABLE_USER_SCRIPT_SANDBOXING\s*=\s*[^;]+;', 'ENABLE_USER_SCRIPT_SANDBOXING = NO;', pbx)
+          else:
+              pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tENABLE_USER_SCRIPT_SANDBOXING = NO;', pbx)
+
           macro_setting = 'GCC_PREPROCESSOR_DEFINITIONS = ( \"$(inherited)\", \"FlutterForegroundTaskPlugin=SwiftFlutterForegroundTaskPlugin\", );'
           if 'GCC_PREPROCESSOR_DEFINITIONS =' in pbx:
               pbx = re.sub(r'GCC_PREPROCESSOR_DEFINITIONS\s*=\s*[^;]+;', macro_setting, pbx)
@@ -239,7 +253,7 @@ jobs:
               f.write(pbx)
 
           # 修改 xcconfig，注入编译参数
-          override_flags = '\nIPHONEOS_DEPLOYMENT_TARGET = 17.0\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\nCOMPILER_INDEX_STORE_ENABLE=NO\nGCC_PREPROCESSOR_DEFINITIONS=$(inherited) FlutterForegroundTaskPlugin=SwiftFlutterForegroundTaskPlugin\n'
+          override_flags = '\nIPHONEOS_DEPLOYMENT_TARGET = 17.0\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\nCOMPILER_INDEX_STORE_ENABLE=NO\nENABLE_USER_SCRIPT_SANDBOXING=NO\nGCC_PREPROCESSOR_DEFINITIONS=$(inherited) FlutterForegroundTaskPlugin=SwiftFlutterForegroundTaskPlugin\n'
           for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
               if os.path.exists(cfg):
                   with open(cfg, 'a', encoding='utf-8') as f:
