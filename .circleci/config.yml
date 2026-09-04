@@ -19,7 +19,7 @@ jobs:
           command: cp .env.template .env
 
       - run:
-          name: 2. 安装 Go 与 Rust 构建环境
+          name: 2. 安裝 Go 與 Rust 構建環境
           command: |
             brew install go
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -67,9 +67,9 @@ jobs:
                     f.write(content)
             "
 
-            # B. 寫入 Podfile，內嵌 Umbrella 頭文件清洗邏輯
-            cat << 'EOF' > ios/Podfile
-            platform :ios, '15.0'
+            # B. 使用 Python 寫入 Podfile（規避 CircleCI 2.1 對 cat << 的解析報錯）
+            python3 -c "
+            podfile_text = '''platform :ios, '15.0'
 
             ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
@@ -82,14 +82,14 @@ jobs:
             def flutter_root
               generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
               unless File.exist?(generated_xcode_build_settings_path)
-                raise "#{generated_xcode_build_settings_path} must exist."
+                raise \"#{generated_xcode_build_settings_path} must exist.\"
               end
 
               File.foreach(generated_xcode_build_settings_path) do |line|
                 matches = line.match(/FLUTTER_ROOT\=(.*)/)
                 return matches[1].strip if matches
               end
-              raise "FLUTTER_ROOT not found"
+              raise \"FLUTTER_ROOT not found\"
             end
 
             require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
@@ -113,7 +113,7 @@ jobs:
 
                   if target.name.include?('zstandard_ios')
                     config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
-                    config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
+                    config.build_settings['HEADER_SEARCH_PATHS'] += ' \"${PODS_TARGET_SRCROOT}/**\" '
                     config.build_settings['DEFINES_MODULE'] = 'NO'
                   end
                 end
@@ -127,14 +127,17 @@ jobs:
                 end
               end
 
-              Dir.glob("#{installer.sandbox.root}/Target Support Files/zstandard_ios/*umbrella.h").each do |umb|
+              Dir.glob(\"#{installer.sandbox.root}/Target Support Files/zstandard_ios/*umbrella.h\").each do |umb|
                 if File.exist?(umb)
                   lines = File.readlines(umb).reject { |l| l.include?('zstd.h') }
                   File.open(umb, 'w') { |f| f.puts(lines) }
                 end
               end
             end
-            EOF
+            '''
+            with open('ios/Podfile', 'w', encoding='utf-8') as f:
+                f.write(podfile_text)
+            "
 
             # C. 修改 Xcode 項目屬性與 Header 引用
             python3 -c "
