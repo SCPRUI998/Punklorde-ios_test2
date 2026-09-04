@@ -18,32 +18,24 @@ jobs:
           name: 1. 配置環境變量文件
           command: cp .env.template .env
 
-      # 恢復 Flutter、Rust、Pub 緩存
-      - restore_cache:
-          keys:
-            - v1-deps-{{ checksum "pubspec.lock" }}
-            - v1-deps-
-
       - run:
           name: 2. 安裝 Go 與 Rust 構建環境
           command: |
             brew install go
-            if ! command -v rustup &> /dev/null; then
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            fi
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo 'source $HOME/.cargo/env' >> $BASH_ENV
             source $BASH_ENV
+            rustup update stable
             rustup target add aarch64-apple-ios
 
       - run:
-          name: 3. 安裝或復用 Flutter SDK
+          name: 3. 安裝 Flutter SDK 並禁用 SPM
           command: |
-            if [ ! -d "$HOME/flutter" ]; then
-              git clone https://github.com/flutter/flutter.git -b stable $HOME/flutter
-            fi
+            git clone https://github.com/flutter/flutter.git -b stable $HOME/flutter
             echo 'export PATH="$HOME/flutter/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
             flutter config --no-enable-swift-package-manager
+            flutter doctor
 
       - run:
           name: 4. 準備 Flutter 依賴與清理緩存
@@ -53,6 +45,7 @@ jobs:
             rm -rf ios/Runner.xcworkspace/xcshareddata/swiftpm
             rm -rf ~/Library/Developer/Xcode/DerivedData
             rm -rf build/ios
+            flutter precache --ios
             flutter pub get
             dart run build_runner build --delete-conflicting-outputs
 
@@ -62,16 +55,9 @@ jobs:
             source $BASH_ENV
             python3 scripts/fix_ios.py
             cd ios
-            pod install
+            rm -rf Pods Podfile.lock
+            pod install --repo-update
             cd ..
-
-      # 保存依賴緩存，加速下一次 Pipeline 執行
-      - save_cache:
-          key: v1-deps-{{ checksum "pubspec.lock" }}
-          paths:
-            - ~/flutter
-            - ~/.cargo
-            - ~/.pub-cache
 
       - run:
           name: 6. 構建 iOS App（未簽名）
