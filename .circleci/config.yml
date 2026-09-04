@@ -19,12 +19,13 @@ jobs:
           command: cp .env.template .env
 
       - run:
-          name: 2. 安裝 Go 與 Rust 構建環境
+          name: 2. 安装 Go 与 Rust 构建环境
           command: |
             brew install go
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo 'source $HOME/.cargo/env' >> $BASH_ENV
             source $BASH_ENV
+            rustup update stable
             rustup target add aarch64-apple-ios
 
       - run:
