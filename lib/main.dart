@@ -12,7 +12,6 @@ import 'package:punklorde/core/account/pkld_file_handler.dart';
 import 'package:punklorde/core/service/widget_service.dart';
 import 'package:punklorde/core/status/app.dart';
 import 'package:punklorde/core/status/auth.dart';
-import 'package0/core/status/device.dart';
 import 'package:punklorde/core/status/device.dart';
 import 'package:punklorde/core/status/experiment.dart';
 import 'package:punklorde/core/status/map.dart';
@@ -27,7 +26,6 @@ import 'package:punklorde/module/service/lbs/location.dart';
 import 'package:punklorde/module/service/lbs/map.dart';
 import 'package:punklorde/src/rust/frb_generated.dart';
 import 'package:punklorde/utils/etc/style.dart';
-import 'package0/utils/notification.dart';
 import 'package:punklorde/utils/notification.dart';
 import 'package:punklorde/utils/permission.dart';
 
