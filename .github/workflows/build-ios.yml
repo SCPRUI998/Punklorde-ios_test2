@@ -22,7 +22,7 @@ jobs:
           sudo xattr -cr . || true
 
       - name: 2. 配置环境变量文件
-        run: cp .env.template .env
+        run: cp .env.template .env || true
 
       - name: 3. 安装 Go 语言环境
         uses: actions/setup-go@v5
@@ -37,12 +37,19 @@ jobs:
       - name: 4.1 将 Cargo/Rust 工具暴露给 Xcode PhaseScript
         run: |
           sudo mkdir -p /usr/local/bin
-          sudo ln -sf ~/.cargo/bin/* /usr/local/bin/
+          sudo ln -sf $HOME/.cargo/bin/cargo /usr/local/bin/cargo
+          sudo ln -sf $HOME/.cargo/bin/rustc /usr/local/bin/rustc
+          sudo ln -sf $HOME/.cargo/bin/rustup /usr/local/bin/rustup
+          sudo ln -sf $HOME/.cargo/bin/* /usr/local/bin/ 2>/dev/null || true
 
-      - name: 4.2 写入 Flutter Xcode 环境配置 (.xcode.env.local)
+      - name: 4.2 写入 Flutter Xcode 环境配置 (.xcode.env 与 .xcode.env.local)
         run: |
-          echo "export PATH=\"\$HOME/.cargo/bin:/usr/local/bin:\$PATH\"" > ios/.xcode.env.local
-          echo "export ENABLE_USER_SCRIPT_SANDBOXING=NO" >> ios/.xcode.env.local
+          mkdir -p ios
+          cat << 'EOF' > ios/.xcode.env
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+          export ENABLE_USER_SCRIPT_SANDBOXING=NO
+          EOF
+          cp ios/.xcode.env ios/.xcode.env.local
 
       - name: 4.3 Rust 依赖与编译产物缓存
         uses: Swatinem/rust-cache@v2
@@ -57,7 +64,7 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: 6. 优化网络与清理缓存
+      - name: 6. 预处理 Flutter 环境与依赖
         run: |
           echo "===== 配置 ~/.curlrc 规避 CDN 握手重置 ====="
           cat << 'EOF' > ~/.curlrc
@@ -79,55 +86,19 @@ jobs:
           flutter precache --ios
           flutter pub get
 
-          dart run build_runner build --delete-conflicting-outputs
+          # 确保 flutter pub get 没有覆写 .xcode.env
+          echo "export PATH=\"\$HOME/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:\$PATH\"" >> ios/.xcode.env
+          echo "export ENABLE_USER_SCRIPT_SANDBOXING=NO" >> ios/.xcode.env
+          cp ios/.xcode.env ios/.xcode.env.local
 
-      - name: 6.5 CocoaPods 依赖缓存
-        uses: actions/cache@v4
-        with:
-          path: |
-            ios/Pods
-            ~/.cocoapods/repos
-          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pods-
+          # 若存在 build_runner 则执行
+          if grep -q "build_runner" pubspec.yaml; then
+            dart run build_runner build --delete-conflicting-outputs
+          fi
 
-      - name: 7. 修复 zstandard_ios、统一部署目标(17.0)、注入预处理宏并安装 CocoaPods
+      - name: 7. 动态生成 Podfile 与 Xcode 配置文件
         run: |
           set -e
-
-          echo "===== 修复 zstandard_ios podspec ====="
-          python3 - <<'PY'
-          import glob
-          import re
-
-          for ps in glob.glob(
-              'ios/.symlinks/plugins/zstandard_ios/**/*.podspec',
-              recursive=True
-          ):
-              print(f"Processing: {ps}")
-
-              with open(ps, 'r', encoding='utf-8') as f:
-                  content = f.read()
-
-              content = re.sub(
-                  r's\.public_header_files\s*=\s*\[[^\]]*\]\s*',
-                  '',
-                  content,
-                  flags=re.DOTALL
-              )
-              content = re.sub(
-                  r's\.public_header_files\s*=\s*[^\n]*\n',
-                  '',
-                  content
-              )
-              if "s.public_header_files = 'Classes/**/*Plugin*.h'" not in content:
-                  content += "\ns.public_header_files = 'Classes/**/*Plugin*.h'\n"
-
-              with open(ps, 'w', encoding='utf-8') as f:
-                  f.write(content)
-
-          print("zstandard_ios podspec patch completed.")
-          PY
 
           echo "===== 生成自定义 Podfile（部署目标提升至 iOS 17.0） ====="
           cat << 'EOF' > ios/Podfile
@@ -266,23 +237,71 @@ jobs:
               f.write(pbx)
 
           # 修改 xcconfig，注入 PATH 与编译参数
-          override_flags = '\nPATH = $(HOME)/.cargo/bin:/usr/local/bin:$(PATH)\nIPHONEOS_DEPLOYMENT_TARGET = 17.0\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\nCOMPILER_INDEX_STORE_ENABLE=NO\nENABLE_USER_SCRIPT_SANDBOXING=NO\nGCC_PREPROCESSOR_DEFINITIONS=$(inherited) FlutterForegroundTaskPlugin=SwiftFlutterForegroundTaskPlugin\n'
+          override_flags = '\nPATH = $(HOME)/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:$(PATH)\nIPHONEOS_DEPLOYMENT_TARGET = 17.0\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\nCOMPILER_INDEX_STORE_ENABLE=NO\nENABLE_USER_SCRIPT_SANDBOXING=NO\nGCC_PREPROCESSOR_DEFINITIONS=$(inherited) FlutterForegroundTaskPlugin=SwiftFlutterForegroundTaskPlugin\n'
           for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
               if os.path.exists(cfg):
                   with open(cfg, 'a', encoding='utf-8') as f:
                       f.write(override_flags)
           "
 
-          echo "===== 安装 CocoaPods ====="
+      - name: 8. CocoaPods 依赖缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/Pods
+            ~/.cocoapods/repos
+          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      - name: 9. 安装 CocoaPods 依赖与 zstandard 补丁
+        run: |
+          set -e
           cd ios
-          if [ ! -d "Pods" ]; then
-            pod install --repo-update
-          else
-            pod install
-          fi
+          pod install --repo-update
           cd ..
 
-      - name: 8. 编译 iOS App（未签名）并保存详细日志
+          echo "===== 修复 zstandard_ios podspec ====="
+          python3 - <<'PY'
+          import glob
+          import re
+
+          for ps in glob.glob(
+              'ios/.symlinks/plugins/zstandard_ios/**/*.podspec',
+              recursive=True
+          ):
+              print(f"Processing: {ps}")
+
+              with open(ps, 'r', encoding='utf-8') as f:
+                  content = f.read()
+
+              content = re.sub(
+                  r's\.public_header_files\s*=\s*\[[^\]]*\]\s*',
+                  '',
+                  content,
+                  flags=re.DOTALL
+              )
+              content = re.sub(
+                  r's\.public_header_files\s*=\s*[^\n]*\n',
+                  '',
+                  content
+              )
+              if "s.public_header_files = 'Classes/**/*Plugin*.h'" not in content:
+                  content += "\ns.public_header_files = 'Classes/**/*Plugin*.h'\n"
+
+              with open(ps, 'w', encoding='utf-8') as f:
+                  f.write(content)
+
+          print("zstandard_ios podspec patch completed.")
+          PY
+
+      - name: 9.1 修正 PhaseScript 及 Pods 脚本执行权限
+        run: |
+          echo "===== 检查并修复所有 Shell 脚本的可执行权限 ====="
+          chmod +x ios/Pods/Target\ Support\ Files/*/*.sh 2>/dev/null || true
+          find ios/ -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+
+      - name: 10. 编译 iOS App（未签名）并保存详细日志
         run: |
           set -e
 
@@ -298,14 +317,14 @@ jobs:
             exit 1
           fi
 
-      - name: 8.5 上传构建日志（无论成功与否）
+      - name: 10.5 上传构建日志（无论成功与否）
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build.log
         if: always()
 
-      - name: 9. 打包为 IPA
+      - name: 11. 打包为 IPA
         run: |
           set -e
 
@@ -316,7 +335,7 @@ jobs:
           zip -r Runner.ipa Payload
           ls -lh Runner.ipa
 
-      - name: 10. 上传 IPA
+      - name: 12. 上传 IPA
         uses: actions/upload-artifact@v4
         with:
           name: Punklorde-iOS-Unsigned

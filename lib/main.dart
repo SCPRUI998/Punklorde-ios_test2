@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_baidu_mapapi_base/flutter_baidu_mapapi_base.dart';
 import 'package:flutter_bmflocation/flutter_bmflocation.dart';
-import 'package0/flutter_inappwebview/flutter_inappwebview.dart'; // 如果是 package，保留正確引用
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 
 import 'package:punklorde/app/main.dart';
@@ -26,7 +26,7 @@ import 'package:punklorde/module/service/lbs/location.dart';
 import 'package:punklorde/module/service/lbs/map.dart';
 import 'package:punklorde/src/rust/frb_generated.dart';
 import 'package:punklorde/utils/etc/style.dart';
-import 'package0/utils/notification.dart';
+import 'package:punklorde/utils/notification.dart';
 import 'package:punklorde/utils/permission.dart';
 
 Future<void> main() async {
