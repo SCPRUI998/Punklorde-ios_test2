@@ -1,33 +1,12 @@
 import os
 import glob
 import re
-import urllib.request
-import time
-
-def download_with_retry(url, dest_path):
-    print(f"Pre-downloading {url} ...")
-    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
-    req = urllib.request.Request(url, headers=headers)
-    for i in range(5):
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp, open(dest_path, 'wb') as f:
-                f.write(resp.read())
-            print(f"Successfully downloaded to {dest_path}")
-            return True
-        except Exception as e:
-            print(f"Download attempt {i+1} failed: {e}")
-            time.sleep(3)
-    return False
 
 def main():
-    # 0. 配置 ~/.curlrc 强制 curl 使用 HTTP/1.1 并增加重试
+    # 0. 全局配置 ~/.curlrc 强制 curl 使用 HTTP/1.1 并增加重试，解决百度 CDN 握手被拒问题
     curlrc = os.path.expanduser('~/.curlrc')
     with open(curlrc, 'w') as f:
-        f.write('http1.1\nretry = 5\nretry-delay = 2\n')
-
-    # 0.1 预下载 BMKLocationKit 压缩包到本地
-    bmk_zip = '/tmp/BMKLocationKitV2.1.4.zip'
-    download_with_retry('https://lbsyun-baidu.cdn.bcebos.com/iossdk/location/2.1.4/BMKLocationKitV2.1.4.zip', bmk_zip)
+        f.write('http1.1\nretry = 10\nretry-delay = 2\nretry-max-time = 120\n')
 
     # A. 修补 zstandard_ios 本地的 podspec
     for ps in glob.glob('ios/.symlinks/plugins/zstandard_ios/**/*.podspec', recursive=True):
@@ -39,7 +18,7 @@ def main():
         with open(ps, 'w', encoding='utf-8') as f:
             f.write(content)
 
-    # B. 写入 Podfile（若存在预下载文件则优先使用本地 file:// 源）
+    # B. 写入 Podfile
     podfile_content = '''platform :ios, '17.0'
 
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -69,9 +48,6 @@ flutter_ios_podfile_setup
 
 target 'Runner' do
   pod 'SDWebImage', :modular_headers => true
-  if File.exist?('/tmp/BMKLocationKitV2.1.4.zip')
-    pod 'BMKLocationKit', :http => 'file:///tmp/BMKLocationKitV2.1.4.zip'
-  end
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
