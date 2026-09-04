@@ -1,0 +1,203 @@
+version: 2.1
+
+executors:
+  macos-runner:
+    macos:
+      xcode: 15.4.0
+    resource_class: macos.m1.medium.gen2
+
+jobs:
+  build-ios:
+    executor: macos-runner
+    working_directory: ~/project
+
+    steps:
+      - checkout
+
+      - run:
+          name: 1. 配置環境變量文件
+          command: cp .env.template .env
+
+      - run:
+          name: 2. 安裝 Go 與 Rust 構建環境
+          command: |
+            brew install go
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            echo 'source $HOME/.cargo/env' >> $BASH_ENV
+            source $BASH_ENV
+            rustup target add aarch64-apple-ios
+
+      - run:
+          name: 3. 安裝 Flutter SDK 並禁用 SPM
+          command: |
+            git clone https://github.com/flutter/flutter.git -b stable $HOME/flutter
+            echo 'export PATH="$HOME/flutter/bin:$PATH"' >> $BASH_ENV
+            source $BASH_ENV
+            flutter config --no-enable-swift-package-manager
+            flutter doctor
+
+      - run:
+          name: 4. 準備 Flutter 依賴與清理緩存
+          command: |
+            source $BASH_ENV
+            rm -rf ios/Flutter/ephemeral
+            rm -rf ios/Runner.xcworkspace/xcshareddata/swiftpm
+            rm -rf ~/Library/Developer/Xcode/DerivedData
+            rm -rf build/ios
+            flutter precache --ios
+            flutter pub get
+            dart run build_runner build --delete-conflicting-outputs
+
+      - run:
+          name: 5. 修正 Podspec、寫入兼容 Podfile 並處理 Xcode 選項
+          command: |
+            source $BASH_ENV
+            
+            # A. 修補 zstandard_ios 本地的 podspec
+            python3 -c "
+            import glob, re
+            for ps in glob.glob('ios/.symlinks/plugins/zstandard_ios/**/*.podspec', recursive=True):
+                with open(ps, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                content = re.sub(r's\.public_header_files\s*=\s*\[[^\]]*\]\s*', '', content, flags=re.DOTALL)
+                content = re.sub(r's\.public_header_files\s*=\s*[^\n]*\n', '', content)
+                content += \"\ns.public_header_files = 'Classes/**/*Plugin*.h'\n\"
+                with open(ps, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            "
+
+            # B. 寫入 Podfile，內嵌 Umbrella 頭文件清洗邏輯
+            cat << 'EOF' > ios/Podfile
+            platform :ios, '15.0'
+
+            ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+            project 'Runner', {
+              'Debug' => :debug,
+              'Profile' => :release,
+              'Release' => :release,
+            }
+
+            def flutter_root
+              generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+              unless File.exist?(generated_xcode_build_settings_path)
+                raise "#{generated_xcode_build_settings_path} must exist."
+              end
+
+              File.foreach(generated_xcode_build_settings_path) do |line|
+                matches = line.match(/FLUTTER_ROOT\=(.*)/)
+                return matches[1].strip if matches
+              end
+              raise "FLUTTER_ROOT not found"
+            end
+
+            require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+            flutter_ios_podfile_setup
+
+            target 'Runner' do
+              pod 'SDWebImage', :modular_headers => true
+              flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+            end
+
+            post_install do |installer|
+              installer.pods_project.targets.each do |target|
+                flutter_additional_ios_build_settings(target)
+                target.build_configurations.each do |config|
+                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+                  config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                  config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                  config.build_settings['ENABLE_BITCODE'] = 'NO'
+                  config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+
+                  if target.name.include?('zstandard_ios')
+                    config.build_settings['HEADER_SEARCH_PATHS'] ||= '$(inherited) '
+                    config.build_settings['HEADER_SEARCH_PATHS'] << '"${PODS_TARGET_SRCROOT}/**" '
+                    config.build_settings['DEFINES_MODULE'] = 'NO'
+                  end
+                end
+
+                if target.name.include?('rust_lib_punklorde')
+                  target.build_phases.each do |phase|
+                    if phase.respond_to?(:output_paths)
+                      phase.output_paths.clear
+                    end
+                  end
+                end
+              end
+
+              Dir.glob("#{installer.sandbox.root}/Target Support Files/zstandard_ios/*umbrella.h").each do |umb|
+                if File.exist?(umb)
+                  lines = File.readlines(umb).reject { |l| l.include?('zstd.h') }
+                  File.open(umb, 'w') { |f| f.puts(lines) }
+                end
+              end
+            end
+            EOF
+
+            # C. 修改 Xcode 項目屬性與 Header 引用
+            python3 -c "
+            import re, os
+
+            header_path = 'ios/Runner/Runner-Bridging-Header.h'
+            if os.path.exists(header_path):
+                with open(header_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    h_content = f.read()
+                h_content = re.sub(r'#import\s+[\"<]flutter_foreground_task/FlutterForegroundTaskPlugin\.h[\">]', '#import <flutter_foreground_task/FlutterForegroundTaskPlugin.h>', h_content)
+                with open(header_path, 'w', encoding='utf-8') as f:
+                    f.write(h_content)
+
+            pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
+            with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
+                pbx = f.read()
+
+            pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;', pbx)
+
+            if 'DEVELOPMENT_TEAM =' in pbx:
+                pbx = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', 'DEVELOPMENT_TEAM = 1234567890;', pbx)
+            else:
+                pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tDEVELOPMENT_TEAM = 1234567890;', pbx)
+
+            if 'CODE_SIGNING_ALLOWED =' in pbx:
+                pbx = re.sub(r'CODE_SIGNING_ALLOWED = [^;]+;', 'CODE_SIGNING_ALLOWED = NO;', pbx)
+            else:
+                pbx = re.sub(r'(buildSettings = \{)', r'\1\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;', pbx)
+
+            with open(pbx_path, 'w', encoding='utf-8') as f:
+                f.write(pbx)
+
+            override_flags = '\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\n'
+            for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
+                if os.path.exists(cfg):
+                    with open(cfg, 'a', encoding='utf-8') as f:
+                        f.write(override_flags)
+            "
+
+            # D. 安裝 Pod 依賴
+            cd ios
+            rm -rf Pods Podfile.lock
+            pod install --repo-update
+            cd ..
+
+      - run:
+          name: 6. 構建 iOS App（未簽名）
+          command: |
+            source $BASH_ENV
+            flutter build ios --release --no-codesign
+
+      - run:
+          name: 7. 打包為 .ipa 產物
+          command: |
+            cd build/ios/iphoneos
+            mkdir Payload
+            mv Runner.app Payload/
+            zip -r Runner.ipa Payload
+
+      - store_artifacts:
+          path: build/ios/iphoneos/Runner.ipa
+          destination: Runner.ipa
+
+workflows:
+  build-and-deploy:
+    jobs:
+      - build-ios
