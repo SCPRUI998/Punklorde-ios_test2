@@ -69,19 +69,19 @@
 		<key>NSFaceIDUsageDescription</key>
 		<string>This app uses Face ID to securely authenticate and decrypt your encrypted data.</string>
 		<key>NSLocationWhenInUseUsageDescription</key>
-		<string>Need to use location information.</string>
+		<string>需要获取您的位置信息以提供地图与定位服务</string>
 		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-		<string>Need to use location information.</string>
+		<string>需要获取您的位置信息以提供地图与定位服务</string>
 		<key>NSLocationAlwaysUsageDescription</key>
-		<string>Need to use location information.</string>
+		<string>需要获取您的位置信息以提供地图与定位服务</string>
 		<key>NSCameraUsageDescription</key>
-	<string>This app needs camera access to scan QR codes</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>This app needs microphone access for classroom interactions.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>This app needs photos access to get QR code from photo library</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>This app needs photos access to save generated QR code images.</string>
+		<string>This app needs camera access to scan QR codes</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>This app needs microphone access for classroom interactions.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>This app needs photos access to get QR code from photo library</string>
+		<key>NSPhotoLibraryAddUsageDescription</key>
+		<string>This app needs photos access to save generated QR code images.</string>
 		<key>BGTaskSchedulerPermittedIdentifiers</key>
 		<array>
 			<string>com.pravera.flutter_foreground_task.refresh</string>
@@ -100,8 +100,8 @@
 		</array>
 		<key>NSAppTransportSecurity</key>
 		<dict>
-   			<key>NSAllowsArbitraryLoads</key>
-   			<true/>
+			<key>NSAllowsArbitraryLoads</key>
+			<true/>
 		</dict>
 	</dict>
 </plist>
