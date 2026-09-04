@@ -12,12 +12,13 @@ import 'package:punklorde/core/account/pkld_file_handler.dart';
 import 'package:punklorde/core/service/widget_service.dart';
 import 'package:punklorde/core/status/app.dart';
 import 'package:punklorde/core/status/auth.dart';
+import 'package0/core/status/device.dart';
 import 'package:punklorde/core/status/device.dart';
 import 'package:punklorde/core/status/experiment.dart';
 import 'package:punklorde/core/status/map.dart';
 import 'package:punklorde/core/status/resource.dart';
 import 'package:punklorde/core/status/schedule.dart';
-import 'package0/core/storage/mmkv.dart';
+import 'package:punklorde/core/storage/mmkv.dart';
 import 'package:punklorde/core/storage/storage.dart';
 import 'package:punklorde/env.dart';
 import 'package:punklorde/i18n/strings.g.dart';
@@ -26,6 +27,7 @@ import 'package:punklorde/module/service/lbs/location.dart';
 import 'package:punklorde/module/service/lbs/map.dart';
 import 'package:punklorde/src/rust/frb_generated.dart';
 import 'package:punklorde/utils/etc/style.dart';
+import 'package0/utils/notification.dart';
 import 'package:punklorde/utils/notification.dart';
 import 'package:punklorde/utils/permission.dart';
 
@@ -60,7 +62,7 @@ Future<void> main() async {
   // 加载持久化的源列表（覆盖默认值）
   await loadResourceStatus();
 
-  // ==================== iOS 百度地图 SDK 初始化 (已修正 API) ====================
+  // ==================== iOS 百度地图 SDK 初始化 ====================
   if (Platform.isIOS) {
     // 1. 设置同意隐私政策
     BMFMapSDK.setAgreePrivacy(true);
@@ -69,8 +71,9 @@ Future<void> main() async {
     LocationFlutterPlugin locationPlugin = LocationFlutterPlugin();
     locationPlugin.setAgreePrivacy(true);
 
-    // 2. 注入 iOS AK (第二个参数为空字符串或指定类型)
-    BMFMapSDK.setApiKey('w4Lshb3n8IIHdPyYkKL91SQ1TxltmOtC', '');
+    // 2. 百度地图 SDK 4.0.1 的 API Key 已改由 ios/Runner/Info.plist 统一读取：
+    // <key>BMFMapApiKey</key>
+    // <string>w4Lshb3n8IIHdPyYkKL91SQ1TxltmOtC</string>
   }
   // =======================================================================
 

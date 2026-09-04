@@ -103,5 +103,8 @@
 			<key>NSAllowsArbitraryLoads</key>
 			<true/>
 		</dict>
+		<!-- 百度地图 API Key -->
+		<key>BMFMapApiKey</key>
+		<string>w4Lshb3n8IIHdPyYkKL91SQ1TxltmOtC</string>
 	</dict>
 </plist>
