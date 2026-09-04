@@ -336,6 +336,16 @@ jobs:
           zip -r Runner.ipa Payload
           ls -lh Runner.ipa
 
+      - name: 11.5 验证 IPA 是否包含百度地图资源包 (mapapi.bundle)
+        run: |
+          echo "===== 检查 IPA 包中是否存在 mapapi.bundle ====="
+          if find build/ios/iphoneos/Payload -name "*mapapi*.bundle" | grep -q .; then
+            echo "✅ SUCCESS: 成功在 IPA 中找到百度地图资源包 (mapapi.bundle)！"
+            find build/ios/iphoneos/Payload -name "*mapapi*.bundle"
+          else
+            echo "⚠️ WARNING: 未在 IPA 中找到 mapapi.bundle，请确认 Pods 是否正常载入资源！"
+          fi
+
       - name: 12. 上传 IPA
         uses: actions/upload-artifact@v4
         with:
