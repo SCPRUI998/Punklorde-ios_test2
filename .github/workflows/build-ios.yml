@@ -186,7 +186,7 @@ jobs:
           end
           EOF
 
-          echo "===== 统一部署目标并注入宏定义映射与构建优化参数 ====="
+          echo "===== 统一部署目标、修改 Bundle ID 并注入宏定义映射与构建优化参数 ====="
           python3 -c "
           import re, os, plistlib
 
@@ -208,10 +208,14 @@ jobs:
                       f.write(content)
                   print('Updated Info.plist MinimumOSVersion via regex.')
 
-          # 修改 pbxproj，确保部署目标为 17.0，禁用索引并设置预处理器宏
+          # 修改 pbxproj，确保部署目标为 17.0，修改 Bundle ID 为 com.scprui.punklorde，禁用索引并设置预处理器宏
           pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(pbx_path, 'r', encoding='utf-8', errors='ignore') as f:
               pbx = f.read()
+
+          # 修改主 Target 的 Bundle Identifier (将 hacker.silverwolf.punklorde 替换为 com.scprui.punklorde)
+          pbx = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*hacker\.silverwolf\.punklorde;', 'PRODUCT_BUNDLE_IDENTIFIER = com.scprui.punklorde;', pbx)
+          pbx = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"hacker\.silverwolf\.punklorde";', 'PRODUCT_BUNDLE_IDENTIFIER = com.scprui.punklorde;', pbx)
 
           pbx = re.sub(r'IPHONEOS_DEPLOYMENT_TARGET\s*=\s*[0-9.]+;', 'IPHONEOS_DEPLOYMENT_TARGET = 17.0;', pbx)
           if 'DEVELOPMENT_TEAM =' in pbx:
@@ -239,8 +243,8 @@ jobs:
           with open(pbx_path, 'w', encoding='utf-8') as f:
               f.write(pbx)
 
-          # 修改 xcconfig，注入 PATH 与编译参数
-          override_flags = '\nPATH = $(HOME)/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:$(PATH)\nIPHONEOS_DEPLOYMENT_TARGET = 17.0\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\nCOMPILER_INDEX_STORE_ENABLE=NO\nENABLE_USER_SCRIPT_SANDBOXING=NO\nGCC_PREPROCESSOR_DEFINITIONS=$(inherited) FlutterForegroundTaskPlugin=SwiftFlutterForegroundTaskPlugin\n'
+          # 修改 xcconfig，注入 PATH、Bundle ID 与编译参数
+          override_flags = '\nPATH = $(HOME)/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:$(PATH)\nPRODUCT_BUNDLE_IDENTIFIER = com.scprui.punklorde\nIPHONEOS_DEPLOYMENT_TARGET = 17.0\nDEVELOPMENT_TEAM=1234567890\nCODE_SIGNING_ALLOWED=NO\nCODE_SIGNING_REQUIRED=NO\nCODE_SIGN_IDENTITY=\nCLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES\nENABLE_BITCODE=NO\nCOMPILER_INDEX_STORE_ENABLE=NO\nENABLE_USER_SCRIPT_SANDBOXING=NO\nGCC_PREPROCESSOR_DEFINITIONS=$(inherited) FlutterForegroundTaskPlugin=SwiftFlutterForegroundTaskPlugin\n'
           for cfg in ['ios/Flutter/Generated.xcconfig', 'ios/Flutter/Release.xcconfig']:
               if os.path.exists(cfg):
                   with open(cfg, 'a', encoding='utf-8') as f:
