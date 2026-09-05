@@ -36,6 +36,7 @@ iOS 平台已按 Android 的实现适配，但仍需在 macOS 上验证。首次
 - 首次需要执行 `flutter pub get` 以生成 `ios/Podfile.lock` 与 `.xcworkspace`（仓库已提供 `ios/Podfile`）。
 
 注意：SSL VPN 功能依赖 Android 的 `VpnService`/TUN 能力，iOS 上该功能不可用（入口已做平台降级）。
+【正在尝试直接使用Github CI技术完成打包操作】
 
 ## 3. 签名配置
 
@@ -114,7 +115,7 @@ baidu_map_key=你的BAIDU_MAP_KEY #必填，Android不允许使用env文件使�
 ### 4.4 申请 API Key
 
 上述配置中涉及的各类 API Key 均需您自行向相应服务商申请。目前包括：
-- 百度地图 API Key
+- 百度地图 API Key【可自行上网查询相关步骤】
 
 请参照项目需求申请并填入对应位置。
 
