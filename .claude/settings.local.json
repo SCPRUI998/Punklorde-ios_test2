@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"/c/Users/james/Desktop\" \"/c/Users/james/Downloads\" \"/c/Users/james/Documents\" -maxdepth 3 -type f \\\\\\( -iname \"*iPhone*.log\" -o -iname \"*punklorde*\" -o -iname \"*.ips\" \\\\\\) 2>/dev/null | head; ls \"/e/\" 2>/dev/null)",
+      "Read(//c/Users/james/Desktop/**)",
+      "Read(//e//**)"
+    ]
+  }
+}

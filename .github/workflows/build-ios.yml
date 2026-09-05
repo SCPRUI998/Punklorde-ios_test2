@@ -24,8 +24,17 @@ jobs:
           # 2. 核心修正：将所有文件所有权还给 runner 用户，防止 flutter build 时无权限修改
           sudo chown -R $(whoami) .
 
-      - name: 2. 配置环境变量文件
-        run: cp .env.template .env || true
+      - name: 2. 配置环境变量文件（从 Secrets 写入百度地图 iOS AK）
+        run: |
+          cp .env.template .env || true
+          # 覆盖写入仓库 Secrets 中的密钥（未配置的 Secret 保持模板空值）
+          sed -i.bak "s|^MMKV_KEY=.*|MMKV_KEY=${MMKV_KEY:-}|" .env
+          sed -i.bak "s|^BAIDU_MAP_APIKEY_ANDROID=.*|BAIDU_MAP_APIKEY_ANDROID=${BAIDU_MAP_APIKEY_ANDROID:-}|" .env
+          sed -i.bak "s|^BAIDU_MAP_APIKEY_IOS=.*|BAIDU_MAP_APIKEY_IOS=${BAIDU_MAP_APIKEY_IOS:-}|" .env
+        env:
+          MMKV_KEY: ${{ secrets.MMKV_KEY }}
+          BAIDU_MAP_APIKEY_ANDROID: ${{ secrets.BAIDU_MAP_APIKEY_ANDROID }}
+          BAIDU_MAP_APIKEY_IOS: ${{ secrets.BAIDU_MAP_APIKEY_IOS }}
 
       - name: 3. 安装 Go 语言环境
         uses: actions/setup-go@v5

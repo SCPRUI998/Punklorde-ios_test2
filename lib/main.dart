@@ -35,7 +35,13 @@ Future<void> main() async {
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
   // 2. 初始化 Rust lib
-  await RustLib.init();
+  // 加 try/catch：Rust 庫加載失敗時記錄錯誤並繼續啟動，
+  // 避免未處理異常卡死啟動畫面（依賴 Rust 的功能在使用時才報錯）
+  try {
+    await RustLib.init();
+  } catch (e) {
+    debugPrint('RustLib init failed: $e');
+  }
 
   pkldFileHandler.init();
   applySystemUiStyle(
