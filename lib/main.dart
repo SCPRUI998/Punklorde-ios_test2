@@ -56,7 +56,16 @@ Future<void> main() async {
   applyStoredLocale();
 
   // 初始化資源管理器
-  await setupResourceManager(dio: Dio());
+  // 加超時保護：默認 Dio 無超時，cdn.jsdelivr.net 在部分網絡（尤其蜂窩網絡）
+  // 不可達時 TCP 連接會掛起數分鐘，導致卡在啟動畫面
+  await setupResourceManager(
+    dio: Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 8),
+        receiveTimeout: const Duration(seconds: 20),
+      ),
+    ),
+  );
 
   // 加載持久化的源列表（覆蓋預設值）
   await loadResourceStatus();
@@ -83,9 +92,10 @@ Future<void> main() async {
   await requestPermission();
 
   // 加載與同步狀態（修復非同步等待）
+  // 加超時預算：即使學校服務器響應慢，也不能無限期阻塞啟動畫面
   try {
-    await loadStatus();
-    await syncStatus();
+    await loadStatus().timeout(const Duration(seconds: 30));
+    await syncStatus().timeout(const Duration(seconds: 60));
   } catch (e) {
     debugPrint('Load or sync status failed: $e');
   }
